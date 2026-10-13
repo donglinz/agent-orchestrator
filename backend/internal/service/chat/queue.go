@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -115,8 +116,8 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 		return false, err
 	}
 	addition := strings.TrimSpace(strings.TrimPrefix(batch, reportsvc.ReportBatchHeader))
-	absorb := func() (bool, error) {
-		return s.store.AbsorbQueuedReportBatch(ctx, conversation.ID, batchKey, addition, s.now())
+	absorb := func(cancelCutoff time.Time) (bool, error) {
+		return s.store.AbsorbQueuedReportBatch(ctx, conversation.ID, batchKey, addition, s.now(), cancelCutoff)
 	}
 	// Drain reads a queued turn's text before it marks the turn dispatching, so
 	// the append must not interleave with a drain. The controller's dispatch lock
@@ -128,7 +129,7 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 		s.mu.RLock()
 		controller := s.controllers[id]
 		if controller == nil {
-			absorbed, err := absorb()
+			absorbed, err := absorb(time.Time{})
 			s.mu.RUnlock()
 			return absorbed, err
 		}
@@ -140,7 +141,13 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 			controller.sendMu.Unlock()
 			continue
 		}
-		absorbed, err := absorb()
+		// An interrupt may have returned before its completion is projected;
+		// drain will then cancel every turn requested at or before its cutoff.
+		// The absorbed turn is re-stamped after that cutoff so it survives.
+		controller.mu.Lock()
+		cutoff := controller.cancelQueuedAt
+		controller.mu.Unlock()
+		absorbed, err := absorb(cutoff)
 		s.mu.RUnlock()
 		controller.sendMu.Unlock()
 		return absorbed, err

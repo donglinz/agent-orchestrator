@@ -796,7 +796,7 @@ func TestAbsorbQueuedReportBatch(t *testing.T) {
 	}
 	absorb := func(key, addition string) bool {
 		t.Helper()
-		ok, err := s.AbsorbQueuedReportBatch(ctx, conversation, key, addition, histClock.Add(time.Hour))
+		ok, err := s.AbsorbQueuedReportBatch(ctx, conversation, key, addition, histClock.Add(time.Hour), time.Time{})
 		if err != nil {
 			t.Fatalf("absorb %s: %v", key, err)
 		}

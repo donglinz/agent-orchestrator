@@ -2374,7 +2374,8 @@ func (s *Store) UpdateQueuedTurnMessage(
 
 // AbsorbQueuedReportBatch appends addition to the newest undispatched report
 // batch of the conversation, so reports that arrive while the agent is busy
-// share one queued turn, which is re-stamped as requested now. batchKey is the batch's delivery identity. A retry of
+// share one queued turn, which is re-stamped as requested now (and after
+// cancelCutoff, a pending stop cutoff, when set). batchKey is the batch's delivery identity. A retry of
 // a batch that already became its own turn, or was already absorbed (receipt
 // written in the same transaction), reports true without appending again, even
 // after the host turn dispatched. It reports false, with nothing written, when
@@ -2382,11 +2383,16 @@ func (s *Store) UpdateQueuedTurnMessage(
 func (s *Store) AbsorbQueuedReportBatch(
 	ctx context.Context,
 	conversationID, batchKey, addition string,
-	now time.Time,
+	now, cancelCutoff time.Time,
 ) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	absorbed := false
+	requestedAt := now
+	if !cancelCutoff.IsZero() && !now.After(cancelCutoff) {
+		// Cancellation takes turns requested at or before its cutoff.
+		requestedAt = cancelCutoff.Add(time.Nanosecond)
+	}
 	deliveryKey := "report-absorb:" + batchKey
 	err := s.inTx(ctx, "absorb queued report batch", func(q *gen.Queries) error {
 		_, err := q.SelectConversationMessageByClientID(ctx, gen.SelectConversationMessageByClientIDParams{
@@ -2430,7 +2436,7 @@ func (s *Store) AbsorbQueuedReportBatch(
 		// since, and after a stop cutoff that predates it, which would otherwise
 		// cancel the host turn together with the reports just appended.
 		if rows, err = q.UpdateQueuedConversationTurnRequestedAt(ctx, gen.UpdateQueuedConversationTurnRequestedAtParams{
-			RequestedAt: now, ID: row.TurnID.String, ConversationID: conversationID,
+			RequestedAt: requestedAt, ID: row.TurnID.String, ConversationID: conversationID,
 		}); err != nil {
 			return fmt.Errorf("requeue report batch turn: %w", err)
 		} else if rows == 0 {

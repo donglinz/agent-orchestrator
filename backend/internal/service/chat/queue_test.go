@@ -226,9 +226,11 @@ func TestAbsorbReportBatchWithLiveController(t *testing.T) {
 	}
 }
 
-// A stuck report interrupts the running turn before its batch is delivered.
-// The interrupt cancels turns queued before it, so the batch must be absorbed
-// as a turn requested after the cutoff or it would be dropped with the old turn.
+// A stuck report interrupts the running turn before its batch is delivered, and
+// the batch is delivered after Interrupt returns but before the turn's
+// completion drains the queue. The interrupt cancels turns requested at or
+// before its cutoff, so the absorbed turn must be requested after it or it would
+// be dropped with the old turn.
 func TestAbsorbReportBatchSurvivesEarlierInterrupt(t *testing.T) {
 	h, provider := steerHarness(t)
 	ctx := context.Background()
@@ -242,7 +244,9 @@ func TestAbsorbReportBatchSurvivesEarlierInterrupt(t *testing.T) {
 	if err := h.svc.Interrupt(ctx, testSession); err != nil {
 		t.Fatal(err)
 	}
-	h.advance(time.Second)
+	// The clock has not moved since the interrupt's cutoff, as on a coarse
+	// clock: the report must still land strictly after it. Interrupt has
+	// returned but the provider's completion is not yet projected.
 	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession,
 		reportsvc.ReportBatchHeader+"\n\n[stuck] w2", "report-batch:r2"); err != nil || !absorbed {
 		t.Fatalf("absorb = %v, %v; want true", absorbed, err)
