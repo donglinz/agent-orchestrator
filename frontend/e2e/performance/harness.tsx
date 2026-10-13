@@ -445,6 +445,8 @@ export const performanceHarness = {
 		const started = performance.now();
 		mount(first);
 		await document.fonts.ready;
+		const domNodesBeforeWindowing = document.getElementsByTagName("*").length;
+		const scrollHeightBeforeWindowing = document.querySelector<HTMLElement>('[role="log"][aria-label="Conversation"]')?.scrollHeight;
 		await wait(500);
 		const mountMs = performance.now() - started;
 		const scroller = document.querySelector<HTMLElement>(
@@ -452,6 +454,9 @@ export const performanceHarness = {
 		)!;
 		if (!scroller) throw new Error("Conversation did not mount");
 		const domNodes = document.getElementsByTagName("*").length;
+		const windowedRows = scroller.querySelectorAll("[data-chat-window-items]").length;
+		const collapsedRows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-chat-window-items]")).filter((row) => row.style.height).length;
+		const scrollHeightAfterWindowing = scroller.scrollHeight;
 		// The spec starts the optional CPU profile here, so mounting is not in it.
 		console.debug("ao-perf:profile-start");
 		await wait(50);
@@ -537,6 +542,11 @@ export const performanceHarness = {
 			queuedReports,
 			snapshotBytes,
 			domNodes,
+			domNodesBeforeWindowing,
+			windowedRows,
+			collapsedRows,
+			scrollHeightBeforeWindowing,
+			scrollHeightAfterWindowing,
 			mountMs,
 			mountedTurns: scroller.querySelectorAll("[data-chat-scroll-anchor]").length,
 			refresh: {
@@ -560,6 +570,9 @@ export const performanceHarness = {
 				keystrokeMedianMs: percentile(busyKeystrokeMs, 0.5),
 				keystrokeP95Ms: percentile(busyKeystrokeMs, 0.95),
 				keystrokeMaxMs: Math.max(0, ...busyKeystrokeMs),
+				commitSequence: commits.filter((c) => c.phase === "typing-while-refreshing").slice(0, 16).map((c) => Math.round(c.actual * 10) / 10),
+				commits: commits.filter((c) => c.phase === "typing-while-refreshing").length,
+				commitActualMs: sum("typing-while-refreshing", "actual"),
 				medianHandledRafPaintMs: [0, 1, 2].map((column) => percentile(busyBreakdown.map((row) => row[column]!), 0.5)),
 			},
 			scroll: {
