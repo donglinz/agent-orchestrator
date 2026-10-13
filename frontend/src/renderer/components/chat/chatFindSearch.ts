@@ -109,8 +109,12 @@ function normalizedText(item: ConversationItem): string {
 	return cached;
 }
 
+/**
+ * The needle a query searches for: lowercased, inner whitespace collapsed, ends
+ * trimmed. A space typed while composing the next word must not change the match.
+ */
 export function normalizeFindQuery(query: string): string {
-	return collapseWhitespace(query).toLowerCase();
+	return collapseWhitespace(query.trim()).toLowerCase();
 }
 
 function countOccurrences(haystack: string, needle: string): number {

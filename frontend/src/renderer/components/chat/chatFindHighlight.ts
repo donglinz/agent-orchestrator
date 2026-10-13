@@ -40,8 +40,9 @@ const SKIPPED_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"
  * spanning bold and plain text is found by the data search but not painted.
  */
 export function findTextRanges(root: Element, query: string, limit = MAX_PAINTED_RANGES): Range[] {
-	const needle = query.toLowerCase();
-	if (!needle.trim()) return [];
+	// The same needle the data search uses: trimmed, inner whitespace collapsed.
+	const needle = query.trim().replace(/\s+/g, " ").toLowerCase();
+	if (!needle) return [];
 	const ranges: Range[] = [];
 	const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
 		acceptNode(node) {

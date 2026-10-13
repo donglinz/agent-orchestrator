@@ -53,6 +53,15 @@ function activity(id: string, summary: string, overrides: Partial<ConversationAc
 const group = (key: string, ...items: ConversationItem[]): ChatFindGroup => ({ key, items });
 
 describe("searchChatItems", () => {
+	it("ignores spaces around the query, so a trailing space changes nothing", () => {
+		const items = [human("a", "the quick fox"), human("b", "quick")];
+		const total = (query: string) => searchChatItems([group("g", ...items)], query).total;
+		expect(total("quick")).toBe(2);
+		expect(total("quick ")).toBe(2);
+		expect(total("  quick")).toBe(2);
+		expect(total("the   quick ")).toBe(1);
+	});
+
 	it("is case-insensitive and counts every occurrence in timeline order", () => {
 		const result = searchChatItems(
 			[

@@ -52,6 +52,11 @@ describe("findTextRanges", () => {
 		expect(ranges.map((range) => range.toString())).toEqual(["Alpha", "ALPHA", "alpha"]);
 	});
 
+	it("matches the same needle as the data search, ignoring surrounding spaces", () => {
+		const ranges = findTextRanges(transcript(), "  alpha ");
+		expect(ranges.map((range) => range.toString())).toEqual(["Alpha", "ALPHA", "alpha"]);
+	});
+
 	it("skips script content and blank queries", () => {
 		expect(findTextRanges(transcript(), "in a script")).toEqual([]);
 		expect(findTextRanges(transcript(), "  ")).toEqual([]);
