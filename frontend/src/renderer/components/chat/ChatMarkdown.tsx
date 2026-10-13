@@ -33,18 +33,20 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 } from "react";
-import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
+import Markdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { isLoopbackHostname } from "../../lib/loopback";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { fenceOf } from "../../lib/markdown-fence";
-import { EMOJI_GRAPHEME, rehypeStreamFade } from "../../lib/rehype-stream-fade";
+import { createFadeLedger, EMOJI_GRAPHEME, rehypeStreamFade, type FadeLedger } from "../../lib/rehype-stream-fade";
+import { splitMarkdownBlocks } from "../../lib/markdown-blocks";
 import { artifactLinkForPath, findSessionLinks, isAoLink, isSessionLink, remarkSessionLinks } from "../../lib/session-links";
 import { useSessionLinkSource } from "../../lib/use-session-link-navigation";
 import {
@@ -84,7 +86,6 @@ export const ActivityTitle = memo(function ActivityTitle({ text }: { text: strin
 
 /** GitHub-flavoured markdown: tables, strikethrough, task lists, autolinks. */
 const PLUGINS = [remarkGfm, remarkSessionLinks];
-const STREAMING_REHYPE = [rehypeStreamFade];
 // Reduced motion gets plain text, not a span per character that never animates.
 const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 // How long a settled reply keeps its fade spans, so the last characters (and the final
@@ -182,6 +183,15 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	// beat past the end of the stream.
 	const [fading, setFading] = useState(streaming);
 	if (streaming && !fading) setFading(true);
+	// A message that streams is rendered as independent blocks, so an update re-parses
+	// the block still growing rather than the whole reply. It stays that way once it
+	// settles: re-rendering it whole would rebuild everything on screen.
+	const [chunked, setChunked] = useState(streaming);
+	if (streaming && !chunked) setChunked(true);
+	const blocks = useMemo(() => (chunked ? splitMarkdownBlocks(text) : [text]), [chunked, text]);
+	// What each block has already faded in, so a render fades only its new text.
+	const fadeLedgers = useRef<FadeLedger[]>([]);
+	const fadeLedger = (index: number) => (fadeLedgers.current[index] ??= createFadeLedger());
 	useEffect(() => {
 		if (streaming) return;
 		const timer = setTimeout(() => setFading(false), FADE_SHED_MS);
@@ -198,17 +208,39 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 					className,
 				)}
 			>
-				<Markdown
-					remarkPlugins={PLUGINS}
-					rehypePlugins={fading && !prefersReducedMotion() ? STREAMING_REHYPE : undefined}
-					components={COMPONENTS}
-					urlTransform={chatUrlTransform}
-				>
-					{text}
-				</Markdown>
+				{blocks.map((block, index) => (
+					<MarkdownBlock
+						// A block's identity is its position: text is only appended while it streams.
+						key={index}
+						text={block}
+						// Only the last block is still growing, so only it fades.
+						fadeLedger={fading && index === blocks.length - 1 && !prefersReducedMotion() ? fadeLedger(index) : undefined}
+					/>
+				))}
 			</div>
 			</SafeOriginContent.Provider>
 		</StreamingProse.Provider>
+	);
+});
+
+/**
+ * One independently parsed piece of a reply. Memoized on its text, so a finished block
+ * costs nothing while the block after it streams.
+ */
+const MarkdownBlock = memo(function MarkdownBlock({ text, fadeLedger }: { text: string; fadeLedger?: FadeLedger }) {
+	const rehypePlugins = useMemo<Options["rehypePlugins"]>(
+		() => (fadeLedger ? [[rehypeStreamFade, fadeLedger]] : undefined),
+		[fadeLedger],
+	);
+	return (
+		<Markdown
+			remarkPlugins={PLUGINS}
+			rehypePlugins={rehypePlugins}
+			components={COMPONENTS}
+			urlTransform={chatUrlTransform}
+		>
+			{text}
+		</Markdown>
 	);
 });
 

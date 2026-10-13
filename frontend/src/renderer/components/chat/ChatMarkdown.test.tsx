@@ -863,6 +863,32 @@ describe("ChatMarkdown streaming fade", () => {
 		expect(container.textContent).toBe("done ✅ now");
 	});
 
+	it("leaves finished blocks of a streaming reply untouched while the last one grows", () => {
+		const { container, rerender } = render(<ChatMarkdown text={"first\n\nsecond"} streaming />);
+		const [first] = Array.from(container.querySelectorAll("p"));
+		expect(first).toHaveTextContent("first");
+		expect(first!.querySelector(".stream-char")).toBeNull();
+
+		rerender(<ChatMarkdown text={"first\n\nsecond and more"} streaming />);
+		rerender(<ChatMarkdown text={"first\n\nsecond and more\n\nthird"} streaming />);
+		const paragraphs = Array.from(container.querySelectorAll("p"));
+		expect(paragraphs).toHaveLength(3);
+		expect(paragraphs[0]).toBe(first);
+		expect(container.textContent?.replace(/\s+/g, " ")).toBe("firstsecond and morethird");
+		expect(paragraphs[2]!.querySelector(".stream-char")).not.toBeNull();
+	});
+
+	it("renders a streamed reply the same once it settles", () => {
+		vi.useFakeTimers();
+		const text = "# T\n\n- a\n\n- b\n\n```sh\nls\n\npwd\n```\n\n| a |\n|---|\n| b |\n\nend";
+		const settled = render(<ChatMarkdown text={text} />);
+		const streamed = render(<ChatMarkdown text={text} streaming />);
+		streamed.rerender(<ChatMarkdown text={text} />);
+		act(() => vi.advanceTimersByTime(500));
+		const markup = (container: HTMLElement) => container.innerHTML.replace(/>\s+</g, "><");
+		expect(markup(streamed.container)).toBe(markup(settled.container));
+	});
+
 	it("keeps links working while their text fades", () => {
 		const onLinkOpen = vi.fn();
 		render(

@@ -67,7 +67,7 @@ function assistant(text: string, streaming = true): ConversationMessage {
  * snapshot JSON, 28 queued report batches), because the shape matters, not the text.
  */
 function hugeLiveTurnSnapshot(
-	options: { items: number; queued: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; tick?: number },
+	options: { items: number; queued: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; tick?: number; liveReplyParagraphs?: number },
 ): ConversationSnapshot {
 	const at = (second: number) =>
 		new Date(Date.UTC(2026, 9, 14, 0, 0, 0) + second * 1000).toISOString();
@@ -145,7 +145,16 @@ function hugeLiveTurnSnapshot(
 		revision: options.tick ?? 0,
 		role: "assistant",
 		origin: "provider",
-		text: "Still polling. ".repeat(4 + (options.tick ?? 0)),
+		// Earlier paragraphs (and a code block) are finished prose; the last one grows.
+		text:
+			Array.from({ length: (options.liveReplyParagraphs ?? 1) - 1 }, (_, paragraph) =>
+				paragraph % 4 === 3
+					? "```bash\nao session ls --project sol-execbench\nao report --done\n```"
+					: `Paragraph ${paragraph}: the worker reported **kernel ${paragraph}** passing and \`attn_decode\` still pending, so I am polling the board again ` +
+						"before assigning the next batch of kernels to the idle workers. ".repeat(3),
+			)
+				.concat("Still polling. ".repeat(4 + (options.tick ?? 0)))
+				.join("\n\n"),
 		streaming: options.liveStreaming ?? true,
 		createdAt: at(2 + options.items * 7),
 	});
@@ -403,7 +412,7 @@ export const performanceHarness = {
 	 * a keystroke in the composer, and a scroll through the turn?
 	 */
 	async hugeTurn(
-		options: { items?: number; queued?: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; refreshes?: number; phases?: string[] } = {},
+		options: { items?: number; queued?: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; refreshes?: number; phases?: string[]; liveReplyParagraphs?: number } = {},
 	) {
 		// About 900 rows of live turn (a few pages of the 200-row history the daemon
 		// serves, as after scrolling back) and ~600 KB of snapshot JSON.
@@ -413,6 +422,7 @@ export const performanceHarness = {
 		const queuedReports = options.queuedReports ?? 4;
 		const refreshes = options.refreshes ?? 12;
 		const liveStreaming = options.liveStreaming ?? true;
+		const liveReplyParagraphs = options.liveReplyParagraphs ?? 1;
 		const runs = (name: string) => !options.phases || options.phases.includes(name);
 		useUiStore.setState({
 			inspectorSessions: { "ao-huge": { isOpen: false, view: "summary" } },
@@ -440,7 +450,7 @@ export const performanceHarness = {
 					/>
 				</Profiler>,
 			);
-		const first = hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick: 0 });
+		const first = hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, liveReplyParagraphs, tick: 0 });
 		const snapshotBytes = JSON.stringify(first).length;
 		const started = performance.now();
 		mount(first);
@@ -462,7 +472,7 @@ export const performanceHarness = {
 		phase = "refresh";
 		const refreshWall: number[] = [];
 		for (let tick = 1; runs("refresh") && tick <= refreshes; tick++) {
-			const next = refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick }));
+			const next = refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, liveReplyParagraphs, tick }));
 			const t0 = performance.now();
 			mount(next);
 			refreshWall.push(performance.now() - t0);
@@ -501,7 +511,7 @@ export const performanceHarness = {
 		const busyKeystrokeMs: number[] = [];
 		const busyBreakdown: number[][] = [];
 		for (let index = 0; runs("typing-while-refreshing") && index < 20; index++) {
-			mount(refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick: 20 + index })));
+			mount(refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, liveReplyParagraphs, tick: 20 + index })));
 			const t0 = performance.now();
 			document.execCommand("insertText", false, "x");
 			const handledMs = performance.now() - t0;
@@ -514,6 +524,25 @@ export const performanceHarness = {
 			});
 			busyKeystrokeMs.push(performance.now() - t0);
 			busyBreakdown.push([handledMs, rafMs, performance.now() - t0]);
+			await wait(20);
+		}
+
+		// 3b. The same keystroke while the snapshot is re-sent unchanged: the floor that
+		// typing-while-refreshing is measured against, with no live text to re-render.
+		phase = "typing-while-unchanged";
+		const unchangedKeystrokeMs: number[] = [];
+		const unchangedSnapshot = hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, liveReplyParagraphs, tick: 20 });
+		for (let index = 0; runs("typing-while-unchanged") && index < 20; index++) {
+			mount(refetched(unchangedSnapshot));
+			const t0 = performance.now();
+			document.execCommand("insertText", false, "x");
+			await frame();
+			await new Promise<void>((resolve) => {
+				const channel = new MessageChannel();
+				channel.port1.onmessage = () => resolve();
+				channel.port2.postMessage(0);
+			});
+			unchangedKeystrokeMs.push(performance.now() - t0);
 			await wait(20);
 		}
 
@@ -560,7 +589,14 @@ export const performanceHarness = {
 				keystrokeMedianMs: percentile(busyKeystrokeMs, 0.5),
 				keystrokeP95Ms: percentile(busyKeystrokeMs, 0.95),
 				keystrokeMaxMs: Math.max(0, ...busyKeystrokeMs),
+				commits: commits.filter((c) => c.phase === "typing-while-refreshing").length,
+				commitActualMs: sum("typing-while-refreshing", "actual"),
 				medianHandledRafPaintMs: [0, 1, 2].map((column) => percentile(busyBreakdown.map((row) => row[column]!), 0.5)),
+			},
+			typingWhileUnchanged: {
+				keystrokeMedianMs: percentile(unchangedKeystrokeMs, 0.5),
+				keystrokeP95Ms: percentile(unchangedKeystrokeMs, 0.95),
+				commits: commits.filter((c) => c.phase === "typing-while-unchanged").length,
 			},
 			scroll: {
 				medianFrameGapMs: percentile(frameGaps, 0.5),
