@@ -58,16 +58,21 @@ interface MarkdownNode {
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
 /** Blocks that start on their own line; cells inside a row are spaced instead. */
-const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "html", "footnoteDefinition"]);
+const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "footnoteDefinition"]);
 
 function collectVisibleText(node: MarkdownNode, out: string[]): void {
 	switch (node.type) {
 		// Literal text: code keeps every character, markdown syntax included.
 		case "text":
 		case "inlineCode":
-		case "code":
 		case "html":
 			out.push(node.value ?? "");
+			return;
+		// A fenced or indented block is literal too, but it is a block: remark strips
+		// the newline around its value, so it needs its own separators or two
+		// adjacent blocks would read as one word.
+		case "code":
+			out.push("\n", node.value ?? "", "\n");
 			return;
 		case "image":
 		case "imageReference":

@@ -281,6 +281,17 @@ describe("markdownVisibleText code and syntax", () => {
 		expect(total("first line\n\nsecond line", "line second")).toBe(1);
 		expect(total("one\n\ntwo", "onetwo")).toBe(0);
 	});
+
+	it("keeps consecutive fenced code blocks apart", () => {
+		const text = "```\nalpha\n```\n\n```\nbeta\n```\n\n    gamma\n\ntext";
+		expect(total(text, "alphabeta")).toBe(0);
+		expect(total(text, "alpha beta")).toBe(1);
+		expect(total(text, "beta gamma")).toBe(1);
+		expect(total("```\nalpha\n```\nbeta", "alphabeta")).toBe(0);
+		expect(total("alpha\n```\nbeta\n```", "alphabeta")).toBe(0);
+		// Code keeps its literal characters, the fence lines excepted.
+		expect(total("```\na ** b\n```", "a ** b")).toBe(1);
+	});
 });
 
 describe("match navigation helpers", () => {
