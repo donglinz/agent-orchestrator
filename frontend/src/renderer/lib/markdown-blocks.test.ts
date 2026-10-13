@@ -30,6 +30,11 @@ const CORPUS: Record<string, string> = {
 	thematicBreak: "a\n\n---\n\nb\n\n***\n\nc",
 	referenceLink: "see [x]\n\ntext\n\n[x]: https://example.com",
 	referenceLinkFirst: "[x]: https://example.com\n\nsee [x]",
+	referenceLinkInQuote: "[foo]\n\n> [foo]: /url",
+	referenceLinkInList: "[foo]\n\n- [foo]: /url\n\ntext",
+	referenceLinkMultilineLabel: "[foo bar]\n\ntext\n\n[foo\nbar]: /url",
+	referenceLinkEscapedBracket: "[foo]]\n\ntext\n\n[foo\\]]: /url",
+	referenceLinkInFence: "[foo]\n\n```\n[foo]: /url\n```\n\ntext",
 	footnote: "a[^1]\n\ntext\n\n[^1]: note",
 	html: "<details>\n<summary>s</summary>\n\nbody\n\n</details>\n\nafter",
 	inlineHtml: "a <b>b</b>\n\nc",
@@ -79,6 +84,12 @@ describe("splitMarkdownBlocks", () => {
 	it("does not split text it cannot reason about", () => {
 		expect(splitMarkdownBlocks("a\n\n[x]: https://example.com")).toHaveLength(1);
 		expect(splitMarkdownBlocks("a\n\n[^1]: note")).toHaveLength(1);
+		expect(splitMarkdownBlocks("[a]\n\n> [a]: /url")).toHaveLength(1);
+		expect(splitMarkdownBlocks("[a]\n\n- [a]: /url")).toHaveLength(1);
+		expect(splitMarkdownBlocks("[a]\n\n[a\nb]: /url")).toHaveLength(1);
+		expect(splitMarkdownBlocks("[a]\n\n[a\\]]: /url")).toHaveLength(1);
+		// Inside a fence it is code, not a definition.
+		expect(splitMarkdownBlocks("[a]\n\n```\n[a]: /url\n```\n\nb")).toHaveLength(3);
 		expect(splitMarkdownBlocks("a\n\n<div>b</div>")).toHaveLength(1);
 	});
 
