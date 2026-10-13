@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
+	reportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/report"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
@@ -180,5 +182,46 @@ func TestQueuedEditRetryAfterCommittedResponseIsLost(t *testing.T) {
 	calls := provider.steers()
 	if len(calls) != 1 || calls[0].msg.Text != "updated" || len(calls[0].msg.Content) != 2 || calls[0].msg.Content[0].Data != "b2xk" || calls[0].msg.Content[1].Data != "bmV3" {
 		t.Fatalf("provider must receive the edited text and attachments exactly once: %+v", calls)
+	}
+}
+
+// With a live controller the append and the drain are serialized: the turn
+// that follows a busy one carries every absorbed batch, and a batch that
+// arrives after dispatch is refused for the caller to deliver as a new turn.
+func TestAbsorbReportBatchWithLiveController(t *testing.T) {
+	h, provider := steerHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: reportsvc.ReportBatchHeader + "\n\n[done] w1", ClientMessageID: "report-batch:r1",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"r2", "r3"} {
+		absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, reportsvc.ReportBatchHeader+"\n\n[done] "+key, "report-batch:"+key)
+		if err != nil || !absorbed {
+			t.Fatalf("absorb %s = %v, %v; want true", key, absorbed, err)
+		}
+	}
+	provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted})
+	want := reportsvc.ReportBatchHeader + "\n\n[done] w1\n\n[done] r2\n\n[done] r3"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		texts := provider.sentTexts()
+		if len(texts) == 2 {
+			if texts[1] != want {
+				t.Fatalf("report turn prompt = %q, want %q", texts[1], want)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("queued report turn never dispatched: %q", texts)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, reportsvc.ReportBatchHeader+"\n\n[done] late", "report-batch:r4")
+	if err != nil || absorbed {
+		t.Fatalf("absorb after dispatch = %v, %v; want false", absorbed, err)
 	}
 }

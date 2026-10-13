@@ -109,14 +109,37 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 	if err != nil {
 		return false, err
 	}
-	// The drain lock keeps the append from landing after a queued turn's text
-	// was read for dispatch but before the turn is promoted.
-	if controller, err := s.Controller(id); err == nil {
-		controller.sendMu.Lock()
-		defer controller.sendMu.Unlock()
-	}
 	addition := strings.TrimSpace(strings.TrimPrefix(batch, reportsvc.ReportBatchHeader))
-	return s.store.AbsorbQueuedReportBatch(ctx, conversation.ID, batchKey, addition, s.now())
+	absorb := func() (bool, error) {
+		return s.store.AbsorbQueuedReportBatch(ctx, conversation.ID, batchKey, addition, s.now())
+	}
+	// Drain reads a queued turn's text before it marks the turn dispatching, so
+	// the append must not interleave with a drain. The controller's dispatch lock
+	// excludes it. The registry read lock, taken only after that lock and never
+	// held while waiting for one, keeps the controller we locked current and,
+	// when none is registered, keeps one from registering and draining. Controller
+	// start under the registry write lock does not wait for the dispatch lock.
+	for {
+		s.mu.RLock()
+		controller := s.controllers[id]
+		if controller == nil {
+			absorbed, err := absorb()
+			s.mu.RUnlock()
+			return absorbed, err
+		}
+		s.mu.RUnlock()
+		controller.sendMu.Lock()
+		s.mu.RLock()
+		if s.controllers[id] != controller {
+			s.mu.RUnlock()
+			controller.sendMu.Unlock()
+			continue
+		}
+		absorbed, err := absorb()
+		s.mu.RUnlock()
+		controller.sendMu.Unlock()
+		return absorbed, err
+	}
 }
 
 // ReorderQueuedTurns rewrites the durable queue order for undispatched turns.
