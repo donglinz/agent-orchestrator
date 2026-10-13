@@ -1024,11 +1024,12 @@ function ChatWorkspaceContent({
 				}, currentEdit.revision);
 				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("chat.draft.queuePrepareFailed");
 				// The editor only shows the human-visible text; the worker-report
-				// envelope on the queued message is still owed to the agent.
-				const queuedMessage = queuedMessages.find((entry) => entry.turnId === queueEdit.turnId)?.message;
+				// envelope captured when editing began is still owed to the agent. It
+				// comes from the draft, not the live queue, so a retry stays identical.
+				const reports = prepared.draft.queuedEdit.reports ?? "";
 				// An otherwise empty edit must still be rejected rather than kept alive by the envelope.
 				const hasContent = text.trim() !== "" || Boolean(attachments?.length) || Boolean(retainedContent?.length);
-				const deliveredText = queuedMessage && hasContent ? text + splitWorkerReports(queuedMessage.text).reports : text;
+				const deliveredText = hasContent ? text + reports : text;
 				try {
 					await onEditQueuedTurn(queueEdit.turnId, deliveredText, {
 						clientMessageId: prepared.draft.queuedEdit.clientMessageId,
@@ -1077,7 +1078,7 @@ function ChatWorkspaceContent({
 				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
 					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
 			});
-			updateQueueDraft({ turnId, ownerId: crypto.randomUUID(), text: parts.body, expectedRevision: message.revision, attachments, stagedAttachments: [] });
+			updateQueueDraft({ turnId, ownerId: crypto.randomUUID(), text: parts.body, reports: splitWorkerReports(message.text).reports || undefined, expectedRevision: message.revision, attachments, stagedAttachments: [] });
 		},
 		[newWorkDisabled, queuedMessages, updateQueueDraft],
 	);

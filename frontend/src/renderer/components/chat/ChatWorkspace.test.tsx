@@ -5064,6 +5064,25 @@ describe("durable queued edits", () => {
 		} finally { storage.mockRestore(); }
 	});
 
+	it("retries a lost edit with the same report envelope after the turn left the queue", async () => {
+		const reports = "\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>";
+		const snapshot = queuedSnapshot();
+		const item = snapshot.items[0] as ConversationMessage;
+		snapshot.items = [{ ...item, text: `queued text${reports}` }];
+		const save = vi.fn().mockRejectedValue(new Error("response lost"));
+		const first = render(<ChatWorkspace snapshot={snapshot} onSend={vi.fn()} onEditQueuedTurn={save} />);
+		await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), " uncertain");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(save).toHaveBeenCalledOnce());
+		expect(save.mock.calls[0][1]).toBe(`queued text uncertain${reports}`);
+		first.unmount();
+		render(<ChatWorkspace snapshot={{ ...snapshot, turns: [], items: [] }} onSend={vi.fn()} onEditQueuedTurn={save} />);
+		await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
+		await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+		expect(save.mock.calls[1]).toEqual(save.mock.calls[0]);
+	});
+
 	it("preserves an unavailable queue target and never converts its recovery into a send", async () => {
 		const snapshot = queuedSnapshot();
 		const save = vi.fn().mockRejectedValue(new Error("response lost"));
