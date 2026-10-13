@@ -116,6 +116,22 @@ Caveats: numbers come from dev-mode React, which inflates absolute values (a pro
 
 Not fixed: a keystroke while a refresh lands still takes about 55 ms at 4x. That time is the browser's style/layout/paint/layerize work for roughly 8K DOM nodes, not React; `content-visibility: auto` did not help. Removing it needs fewer mounted rows in a live turn, for example windowing or folding older runs ("N earlier steps"), which changes the UX, or an incremental history refresh (see the limits below). The streaming Markdown re-parse is a constant cost independent of turn size.
 
+### In-turn row windowing
+
+A turn with more than 40 runs now swaps rows far from the viewport (beyond 150% of its height) for an empty box of their exact measured height (`WindowedRow`). Scroll height and positions do not change; focus, selection, a pinned edit and a jump to a message (the box is scrolled into view and the row mounts) keep working. Browser Find and DOM selection cover only mounted rows, as with turn virtualization.
+
+Same fixture, 3 runs, dev-mode React:
+
+| Metric | PR #4 | Windowed |
+| --- | --- | --- |
+| DOM nodes | 8110 | 1643 |
+| Refresh wall time, 1x / 4x | 12 / 76 ms | 16 / 84 ms |
+| Keystroke during refresh, 1x / 4x | 4.3 / 66 ms | 4.0 / 60 ms |
+| Scroll frame p95 / max, 1x | 9.2 / 9.3 ms | 9.3 / 25 ms |
+| Scroll frame p95 / max, 4x | 25 / 92 ms | 59 / 209 ms |
+
+Windowing cuts the DOM by 80% but does not shorten a keystroke during a refresh, so the layout and paint cost of the DOM was not what delayed it. The delay is the live reply's own re-render: each refresh triggers about three async commits of roughly 33 ms at 4x, mostly the streaming Markdown re-parse and its effects, and with an unchanged snapshot the same keystroke takes 13.5 ms. Scrolling gets more expensive because rows mount as they approach the viewport.
+
 ## Screenshots
 
 No layout redesign is included. The before/after images show the same long-chat fixture; the native image identifies the isolated app smoke.

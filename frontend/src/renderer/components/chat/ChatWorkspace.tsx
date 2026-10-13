@@ -81,6 +81,7 @@ import {
 import { purgeFileAttachments, purgeFileAttachmentsForSession } from "../../hooks/useFileAttachments";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
 import { sameContent, useStableList } from "../../lib/stable-list";
+import { ChatScrollRootContext, WindowedRow } from "./WindowedRow";
 import { useTabScrollEdges } from "../../hooks/useTabScrollEdges";
 import { useSidebarChromeClearanceRef } from "../../hooks/useSidebarChromeGeometry";
 import { apiErrorCode, getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -2376,6 +2377,11 @@ function ControllerBanner({
  * an unbounded history in every snapshot response.
  */
 const CHAT_VIRTUALIZE_THRESHOLD = 20;
+/**
+ * A turn with more runs than this windows its rows. Whole-turn virtualization cannot
+ * help one turn that holds hundreds of rows, and a small turn is cheaper to keep whole.
+ */
+const CHAT_WINDOW_TURN_RUNS = 40;
 /** How long the welcome heading takes to fade out on the first send. */
 const WELCOME_FADE_MS = 150;
 /** Opening a chat snaps to the end for this long while rows measure and history arrives. */
@@ -3361,6 +3367,11 @@ export function Timeline({
 				setActivityDisclosureOverrides((current) => ({ ...current, [disclosureKey]: true }));
 			}
 			if (virtualized) virtualizer.scrollToIndex(index, { align: "center" });
+			// A row of a windowed turn that is far from the viewport is an empty box of the
+			// same height. Bring the box into view; the row mounts and the retry finds it.
+			Array.from(scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-window-items]") ?? [])
+				.find((box) => box.dataset.chatWindowItems?.split(" ").includes(annotationTarget.messageId as string))
+				?.scrollIntoView({ behavior: "auto", block: "center" });
 			if (annotationRetryCount.current++ >= 20) {
 				setAnnotationNavigationError("The referenced message could not be brought into view.");
 				setAnnotationTarget(undefined);
@@ -3774,6 +3785,7 @@ export function Timeline({
 	}
 
 	return (
+		<ChatScrollRootContext.Provider value={scroller}>
 		<div
 			className="relative min-h-0 flex-1"
 			data-testid="chat-timeline"
@@ -4063,6 +4075,7 @@ export function Timeline({
 				</Button>
 			) : null}
 		</div>
+		</ChatScrollRootContext.Provider>
 	);
 }
 
@@ -4257,6 +4270,23 @@ const TurnGroup = memo(function TurnGroup({
 				onSelectAnnotation={onSelectAnnotation}
 			/>
 		);
+	// Sticky: a turn that has been windowed stays windowed, so a refresh that trims it
+	// below the limit does not remount every row.
+	const windowedBefore = useRef(false);
+	if (runs.length > CHAT_WINDOW_TURN_RUNS) windowedBefore.current = true;
+	const windowed = windowedBefore.current;
+	const renderWorkedRun = (run: TimelineRun) =>
+		windowed && !rendersNothing(run) ? (
+			<WindowedRow
+				key={run.key}
+				itemIds={run.items.map((item) => item.id).join(" ")}
+				pinned={Boolean(messageEdit) && isHumanRun(run.items[0])}
+			>
+				{renderRun(run)}
+			</WindowedRow>
+		) : (
+			renderRun(run)
+		);
 	// One flat keyed list rather than a slot per section, so a run keeps its element
 	// when the turn settles: the final answer leaving the worked runs, or a notice
 	// moving out from among them, does not remount it or drop the reader's selection.
@@ -4280,7 +4310,7 @@ const TurnGroup = memo(function TurnGroup({
 	}
 	const outcome = showSettledStatus ? group.outcome : undefined;
 	if (!outcome) {
-		body.push(...workedRuns.map(renderRun));
+		body.push(...workedRuns.map(renderWorkedRun));
 	} else {
 		const disclosureKey = `${group.key}:worked`;
 		body.push(
@@ -4290,7 +4320,7 @@ const TurnGroup = memo(function TurnGroup({
 				open={Boolean(activityDisclosureOverrides[disclosureKey])}
 				onOpenChange={(open) => onActivityDisclosureChange(disclosureKey, open)}
 			>
-				{foldedRuns.length > 0 ? foldedRuns.map(renderRun) : undefined}
+				{foldedRuns.length > 0 ? foldedRuns.map(renderWorkedRun) : undefined}
 			</TurnWorkSummary>,
 		);
 	}
