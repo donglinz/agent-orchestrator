@@ -530,6 +530,18 @@ function OfflineRemoteTerminal() {
  * then only fail closed against the successor lease. If storage alone fails,
  * Chat still mounts, but with an in-memory composer that owns no saved drafts.
  */
+/**
+ * Drafts saved before `reports` existed hold the whole queued message, envelope
+ * included. Show only the human text and keep the envelope aside; appending it
+ * back on send reproduces the original payload exactly, which a pending save's
+ * recovery key requires.
+ */
+function withSplitWorkerReports(edit: ChatDraftQueuedEdit | undefined): ChatDraftQueuedEdit | undefined {
+	if (!edit || edit.reports !== undefined) return edit;
+	const { visible, reports } = splitWorkerReports(edit.text);
+	return reports ? { ...edit, text: visible, reports } : edit;
+}
+
 export function ChatWorkspace(props: ChatWorkspaceProps) {
 	const { snapshot, session, draftOwner, uiSessionId = draftOwner?.sessionId ?? snapshot.sessionId } = props;
 	const draftScope = useMemo<ChatDraftScope>(
@@ -935,7 +947,7 @@ function ChatWorkspaceContent({
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
 	const [queueEdit, setQueueEdit] = useState<ChatDraftQueuedEdit | undefined>(
-		() => (draftPersistenceAvailable ? readChatSessionDraft(draftScope).queuedEdit : undefined),
+		() => (draftPersistenceAvailable ? withSplitWorkerReports(readChatSessionDraft(draftScope).queuedEdit) : undefined),
 	);
 	const queueEditRef = useRef(queueEdit);
 	const [queueDraftError, setQueueDraftError] = useState<string>();
@@ -1028,7 +1040,9 @@ function ChatWorkspaceContent({
 				// comes from the draft, not the live queue, so a retry stays identical.
 				const reports = prepared.draft.queuedEdit.reports ?? "";
 				// An otherwise empty edit must still be rejected rather than kept alive by the envelope.
-				const hasContent = text.trim() !== "" || Boolean(attachments?.length) || Boolean(retainedContent?.length);
+				// A save already sent under its recovery key must replay byte for byte.
+				const hasContent = text.trim() !== "" || Boolean(attachments?.length) || Boolean(retainedContent?.length)
+					|| Boolean(currentEdit.clientMessageId);
 				const deliveredText = hasContent ? text + reports : text;
 				try {
 					await onEditQueuedTurn(queueEdit.turnId, deliveredText, {

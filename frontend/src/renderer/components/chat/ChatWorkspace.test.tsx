@@ -26,6 +26,7 @@ import {
 	readChatSessionDraft,
 	writeChatInlineEdit,
 	writeChatComposerText,
+	writeChatQueuedEdit,
 } from "../../lib/chat-drafts";
 import {
 	getChatDraftBoundaries,
@@ -5081,6 +5082,47 @@ describe("durable queued edits", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
 		await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
 		expect(save.mock.calls[1]).toEqual(save.mock.calls[0]);
+	});
+
+	describe("drafts saved before reports were kept aside", () => {
+		const reports = "\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>";
+		function oldDraftSnapshot() {
+			const snapshot = queuedSnapshot();
+			const item = snapshot.items[0] as ConversationMessage;
+			snapshot.items = [{ ...item, text: `queued text${reports}` }];
+			return snapshot;
+		}
+
+		it("hides the envelope in a restored unsent draft and sends it back once", async () => {
+			const snapshot = oldDraftSnapshot();
+			writeChatQueuedEdit(snapshot.sessionId, {
+				turnId: "queued", ownerId: "old-owner", text: `queued text${reports}`, expectedRevision: 0,
+			});
+			const save = vi.fn().mockResolvedValue(undefined);
+			render(<ChatWorkspace snapshot={snapshot} onSend={vi.fn()} onEditQueuedTurn={save} />);
+			const composer = screen.getByLabelText("Message the agent");
+			expect(composer).toHaveTextContent("queued text");
+			expect(composer).not.toHaveTextContent("ao-worker-reports");
+			await typeInLexicalEditor(composer, " updated");
+			await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+			await waitFor(() => expect(save).toHaveBeenCalledOnce());
+			expect(save.mock.calls[0][1]).toBe(`queued text updated${reports}`);
+		});
+
+		it("replays an already pending save with its exact original payload", async () => {
+			const snapshot = oldDraftSnapshot();
+			writeChatQueuedEdit(snapshot.sessionId, {
+				turnId: "queued", ownerId: "old-owner", text: `queued text uncertain${reports}`, expectedRevision: 0,
+				clientMessageId: "pending-key", saving: true, retainedContent: undefined,
+			} as Parameters<typeof writeChatQueuedEdit>[1]);
+			const save = vi.fn().mockResolvedValue(undefined);
+			render(<ChatWorkspace snapshot={{ ...snapshot, turns: [] }} onSend={vi.fn()} onEditQueuedTurn={save} />);
+			expect(screen.getByLabelText("Message the agent")).not.toHaveTextContent("ao-worker-reports");
+			await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
+			await waitFor(() => expect(save).toHaveBeenCalledOnce());
+			expect(save.mock.calls[0][1]).toBe(`queued text uncertain${reports}`);
+			expect(save.mock.calls[0][2]).toMatchObject({ clientMessageId: "pending-key", expectedRevision: 0 });
+		});
 	});
 
 	it("preserves an unavailable queue target and never converts its recovery into a send", async () => {
