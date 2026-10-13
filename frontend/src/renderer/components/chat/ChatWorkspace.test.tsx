@@ -5126,6 +5126,23 @@ describe("durable queued edits", () => {
 			await waitFor(() => expect(save).toHaveBeenCalledOnce());
 			expect(save.mock.calls[0]).toEqual(["queued", oldRequestText, expect.objectContaining({ clientMessageId: "pending-key", expectedRevision: 0 })]);
 		});
+
+		it("keeps a report-only pending save recoverable and replays its payload", async () => {
+			const snapshot = oldDraftSnapshot();
+			// The old editor could be left holding only the envelope; its trimmed text is what was sent.
+			const onlyReports = reports.trim();
+			writeChatQueuedEdit(snapshot.sessionId, {
+				turnId: "queued", ownerId: "old-owner", text: onlyReports, expectedRevision: 0,
+				clientMessageId: "pending-key", saving: true,
+			});
+			const save = vi.fn().mockResolvedValue(undefined);
+			render(<ChatWorkspace snapshot={{ ...snapshot, turns: [] }} onSend={vi.fn()} onEditQueuedTurn={save} />);
+			const retry = screen.getByRole("button", { name: "Retry edit safely" });
+			expect(retry).toBeEnabled();
+			await userEvent.click(retry);
+			await waitFor(() => expect(save).toHaveBeenCalledOnce());
+			expect(save.mock.calls[0]).toEqual(["queued", onlyReports, expect.objectContaining({ clientMessageId: "pending-key", expectedRevision: 0 })]);
+		});
 	});
 
 	it("preserves an unavailable queue target and never converts its recovery into a send", async () => {
