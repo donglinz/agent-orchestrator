@@ -121,7 +121,7 @@ Not fixed: a keystroke while a refresh lands still takes about 55 ms at 4x. That
 A keystroke typed while a refresh lands was still slow after the row work above. The cause was not the turn's DOM: it was the streaming reply, which re-renders on every drained animation frame (about 3 async commits per refresh). Two costs, found with a CPU profile of the harness:
 
 - `rehypeStreamFade` wrapped every character of the growing block in its own `span.stream-char`: thousands of elements created and diffed per tick. It now wraps each run of newly arrived characters in one span (a per-block `FadeLedger` records the boundaries of earlier renders), so spans stay append-only and old text keeps its finished fade. Emoji stay plain text nodes. The fade looks the same.
-- Every tick re-parsed the whole reply. `splitMarkdownBlocks` (`lib/markdown-blocks.ts`) cuts a streaming reply at unindented lines after a blank line, outside fences, and each piece renders as a memoized `MarkdownBlock`, so a tick re-parses only the last block. It refuses to split (one piece, as before) a text with link/footnote definitions or HTML, and never cuts before a list marker or an indented line. Tests render every prefix of a corpus (lists, tables, fences, setext, CRLF, ...) split and whole and require identical HTML. A message that streamed stays split after it settles, so nothing is rebuilt; settled history messages are untouched.
+- Every tick re-parsed the whole reply. `splitMarkdownBlocks` (`lib/markdown-blocks.ts`) cuts a streaming reply at unindented lines after a blank line, outside fences, and each piece renders as a memoized `MarkdownBlock`, so a tick re-parses only the last block. It refuses to split (one piece, as before) a text with any `]:` outside a fence (definitions can sit in quotes or list items, span lines or escape brackets), HTML, a bare CR, or a fence inside a quote or list item or indented; a blank line is only spaces and tabs; it never cuts before a list marker or an indented line. Tests render every prefix of a corpus and of seeded random documents (lists, tables, fences, setext, CRLF, definitions, Unicode whitespace, ...) split and whole and require identical HTML. A message that streamed stays split after it settles, so nothing is rebuilt; settled history messages are untouched.
 
 Measure with `AO_PERF_OPTIONS='{"liveReplyParagraphs":40}'` (the growing reply has 1 paragraph by default; earlier paragraphs are prose with a code block every fourth). The harness has a `typing-while-unchanged` phase: a keystroke while an identical snapshot is re-mounted, which is the floor for the keystroke-during-refresh number. Interleaved A/B (4 rounds production, 3 rounds dev, medians, 4x CPU throttle):
 
@@ -129,9 +129,9 @@ Measure with `AO_PERF_OPTIONS='{"liveReplyParagraphs":40}'` (the growing reply h
 | --- | --- | --- | --- |
 | Dev React, 1-paragraph reply | 50.9 ms | 18.1 ms | 10.5 ms |
 | Dev React, 40-paragraph reply | 91.2 ms | 22.2 ms | 11.5 ms |
-| Production build, 1 paragraph | 18.8 ms | 10.2 ms | 8.3 ms |
+| Production build, 1 paragraph | 17.5 ms | 10.1 ms | 7.9 ms |
 | Production build, 12 paragraphs | 18.5 ms | 9.9 ms | 7.8 ms |
-| Production build, 40 paragraphs | 31.3 ms | 9.5 ms | 6.9 ms |
+| Production build, 40 paragraphs | 27.9 ms | 8.8 ms | 6.4 ms |
 
 Dev React: total commit time during the typing phase fell 2008 to 1067 ms (1 paragraph) and 4205 to 1255 ms (40 paragraphs); total render time over the refresh phase 788 to 526 ms and 1720 to 661 ms. Refresh wall time, idle keystroke and scroll p95 are equal or better in every run.
 
