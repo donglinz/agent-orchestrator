@@ -829,6 +829,19 @@ func TestAbsorbQueuedReportBatch(t *testing.T) {
 		t.Fatalf("queued batch text = %q, want %q", message.Text, want)
 	}
 
+	// The batch is re-stamped as requested at the absorb time, so a stop cutoff
+	// that predates the absorb cancels earlier turns but not the batch.
+	next, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil || next.TurnID != "human" {
+		t.Fatalf("queue head = %+v, err = %v; want the human turn ahead of the re-stamped batch", next, err)
+	}
+	if err := s.CancelQueuedTurns(ctx, conversation, histClock.Add(30*time.Minute), histClock.Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if next, err = s.NextQueuedTurn(ctx, conversation); err != nil || next.TurnID != "batch-1" ||
+		!strings.Contains(next.Text, "third batch") {
+		t.Fatalf("queue after stop cutoff = %+v, err = %v; want the absorbed batch", next, err)
+	}
 	// Once the batch is reserved for dispatch it is closed to appends, but the
 	// receipt still answers a retry of an already absorbed batch.
 	if _, err := s.ReserveQueuedTurnForPromotion(ctx, conversation, "batch-1", histClock.Add(time.Minute)); err != nil {

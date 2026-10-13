@@ -225,3 +225,43 @@ func TestAbsorbReportBatchWithLiveController(t *testing.T) {
 		t.Fatalf("absorb after dispatch = %v, %v; want false", absorbed, err)
 	}
 }
+
+// A stuck report interrupts the running turn before its batch is delivered.
+// The interrupt cancels turns queued before it, so the batch must be absorbed
+// as a turn requested after the cutoff or it would be dropped with the old turn.
+func TestAbsorbReportBatchSurvivesEarlierInterrupt(t *testing.T) {
+	h, provider := steerHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: reportsvc.ReportBatchHeader + "\n\n[done] w1", ClientMessageID: "report-batch:r1",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.advance(time.Second)
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatal(err)
+	}
+	h.advance(time.Second)
+	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession,
+		reportsvc.ReportBatchHeader+"\n\n[stuck] w2", "report-batch:r2"); err != nil || !absorbed {
+		t.Fatalf("absorb = %v, %v; want true", absorbed, err)
+	}
+	provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted})
+	want := reportsvc.ReportBatchHeader + "\n\n[done] w1\n\n[stuck] w2"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		texts := provider.sentTexts()
+		if len(texts) == 2 {
+			if texts[1] != want {
+				t.Fatalf("report turn prompt = %q, want %q", texts[1], want)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("absorbed report turn was dropped by the interrupt: %q", texts)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

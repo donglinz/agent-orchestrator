@@ -2374,7 +2374,7 @@ func (s *Store) UpdateQueuedTurnMessage(
 
 // AbsorbQueuedReportBatch appends addition to the newest undispatched report
 // batch of the conversation, so reports that arrive while the agent is busy
-// share one queued turn. batchKey is the batch's delivery identity. A retry of
+// share one queued turn, which is re-stamped as requested now. batchKey is the batch's delivery identity. A retry of
 // a batch that already became its own turn, or was already absorbed (receipt
 // written in the same transaction), reports true without appending again, even
 // after the host turn dispatched. It reports false, with nothing written, when
@@ -2425,6 +2425,16 @@ func (s *Store) AbsorbQueuedReportBatch(
 		}
 		if rows == 0 {
 			return nil
+		}
+		// The batch behaves as if it were queued now: behind anything queued
+		// since, and after a stop cutoff that predates it, which would otherwise
+		// cancel the host turn together with the reports just appended.
+		if rows, err = q.UpdateQueuedConversationTurnRequestedAt(ctx, gen.UpdateQueuedConversationTurnRequestedAtParams{
+			RequestedAt: now, ID: row.TurnID.String, ConversationID: conversationID,
+		}); err != nil {
+			return fmt.Errorf("requeue report batch turn: %w", err)
+		} else if rows == 0 {
+			return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, row.TurnID.String)
 		}
 		if err := q.InsertConversationQueuedEditDelivery(ctx, gen.InsertConversationQueuedEditDeliveryParams{
 			ConversationID: conversationID, ClientMessageID: deliveryKey,
