@@ -531,13 +531,14 @@ function OfflineRemoteTerminal() {
  * Chat still mounts, but with an in-memory composer that owns no saved drafts.
  */
 /**
- * Drafts saved before `reports` existed hold the whole queued message, envelope
- * included. Show only the human text and keep the envelope aside; appending it
- * back on send reproduces the original payload exactly, which a pending save's
- * recovery key requires.
+ * Unsent drafts saved before `reports` existed hold the whole queued message,
+ * envelope included. Show only the human text and keep the envelope aside.
+ * A save already pending under a recovery key is left untouched: the old composer
+ * built its request from that whole text (envelope before any attachment
+ * references), and a retry must reproduce that payload byte for byte.
  */
 function withSplitWorkerReports(edit: ChatDraftQueuedEdit | undefined): ChatDraftQueuedEdit | undefined {
-	if (!edit || edit.reports !== undefined) return edit;
+	if (!edit || edit.reports !== undefined || edit.clientMessageId) return edit;
 	const { visible, reports } = splitWorkerReports(edit.text);
 	return reports ? { ...edit, text: visible, reports } : edit;
 }

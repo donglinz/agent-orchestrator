@@ -5109,19 +5109,22 @@ describe("durable queued edits", () => {
 			expect(save.mock.calls[0][1]).toBe(`queued text updated${reports}`);
 		});
 
-		it("replays an already pending save with its exact original payload", async () => {
+		it("replays an already pending save with its exact original request, staged file included", async () => {
 			const snapshot = oldDraftSnapshot();
+			const staged = { id: "file-1", path: ".ao/attachments/attachment-abc123.txt", name: "note.txt", mimeType: "text/plain", bytes: 4 };
+			// What the pre-change composer sent: the whole text, envelope included,
+			// followed by the attachment references.
+			const oldRequestText =
+				`queued text uncertain${reports}\n\nAttached files (read these files in the workspace):\n- ${staged.path}`;
 			writeChatQueuedEdit(snapshot.sessionId, {
 				turnId: "queued", ownerId: "old-owner", text: `queued text uncertain${reports}`, expectedRevision: 0,
-				clientMessageId: "pending-key", saving: true, retainedContent: undefined,
-			} as Parameters<typeof writeChatQueuedEdit>[1]);
+				stagedAttachments: [staged], clientMessageId: "pending-key", saving: true,
+			});
 			const save = vi.fn().mockResolvedValue(undefined);
 			render(<ChatWorkspace snapshot={{ ...snapshot, turns: [] }} onSend={vi.fn()} onEditQueuedTurn={save} />);
-			expect(screen.getByLabelText("Message the agent")).not.toHaveTextContent("ao-worker-reports");
 			await userEvent.click(screen.getByRole("button", { name: "Retry edit safely" }));
 			await waitFor(() => expect(save).toHaveBeenCalledOnce());
-			expect(save.mock.calls[0][1]).toBe(`queued text uncertain${reports}`);
-			expect(save.mock.calls[0][2]).toMatchObject({ clientMessageId: "pending-key", expectedRevision: 0 });
+			expect(save.mock.calls[0]).toEqual(["queued", oldRequestText, expect.objectContaining({ clientMessageId: "pending-key", expectedRevision: 0 })]);
 		});
 	});
 
