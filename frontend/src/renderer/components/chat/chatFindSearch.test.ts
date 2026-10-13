@@ -229,6 +229,52 @@ describe("markdownVisibleText", () => {
 	});
 });
 
+describe("markdownVisibleText code and syntax", () => {
+	const total = (text: string, query: string) =>
+		searchChatItems([group("g", message("m", text))], query).total;
+
+	it("keeps the literal contents of fenced code", () => {
+		const text = "Here:\n\n```python\nresult = 2 ** 3\nname = '__x__'\n# not a heading\n- not a bullet\n[a](b)\n```\n";
+		expect(total(text, "2 ** 3")).toBe(1);
+		expect(total(text, "2 3")).toBe(0);
+		expect(total(text, "'__x__'")).toBe(1);
+		expect(total(text, "# not a heading")).toBe(1);
+		expect(total(text, "- not a bullet")).toBe(1);
+		expect(total(text, "[a](b)")).toBe(1);
+		expect(total(text, "python")).toBe(0);
+		expect(total(text, "```")).toBe(0);
+	});
+
+	it("keeps the literal contents of inline code", () => {
+		const text = "Use `a ** b` and `~~keep~~` and `**bold?**` here.";
+		expect(total(text, "a ** b")).toBe(1);
+		expect(total(text, "~~keep~~")).toBe(1);
+		expect(total(text, "**bold?**")).toBe(1);
+		expect(total(text, "`")).toBe(0);
+	});
+
+	it("still strips real markup outside code", () => {
+		const text = "## Title\n\n**bold** and ~~gone~~ and [site](https://example.com/x) ![alt text](img.png)\n\n1. first\n2. second\n\n> quoted";
+		expect(markdownVisibleText(text)).toContain("bold and gone and site alt text");
+		for (const absent of ["##", "**", "~~", "https://example.com/x", "img.png", "1.", ">"]) {
+			expect(markdownVisibleText(text)).not.toContain(absent);
+		}
+		for (const present of ["Title", "first", "second", "quoted"]) {
+			expect(markdownVisibleText(text)).toContain(present);
+		}
+	});
+
+	it("reads table cells as text", () => {
+		expect(total("| a | b |\n| - | - |\n| needle | 2 |", "needle")).toBe(1);
+		expect(total("| a | b |\n| - | - |\n| needle | 2 |", "|")).toBe(0);
+	});
+
+	it("keeps words from adjacent blocks apart", () => {
+		expect(total("first line\n\nsecond line", "line second")).toBe(1);
+		expect(total("one\n\ntwo", "onetwo")).toBe(0);
+	});
+});
+
 describe("match navigation helpers", () => {
 	const result = searchChatItems(
 		[group("g1", message("a", "x x"), message("b", "x")), group("g2", message("c", "x x x"))],

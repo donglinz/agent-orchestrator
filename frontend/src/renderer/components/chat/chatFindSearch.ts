@@ -11,6 +11,9 @@
  * of every occurrence.
  */
 
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import type { ConversationItem } from "../../types/conversation";
 import { fileChangeFiles, isCompaction, isSteer } from "../../types/conversation";
 import { isSearchableQuery, normalizeFindQuery } from "./chatFindQuery";
@@ -42,21 +45,67 @@ export interface ChatFindResult {
 
 export const EMPTY_FIND_RESULT: ChatFindResult = { query: "", hits: [], total: 0 };
 
+/** The slice of an mdast node this extractor reads. */
+interface MarkdownNode {
+	type: string;
+	value?: string;
+	alt?: string | null;
+	children?: MarkdownNode[];
+}
+
+// Parsed like the transcript renders it (`ChatMarkdown` uses react-markdown with
+// remark-gfm), so tables, strikethrough and autolinks mean the same thing here.
+const markdownParser = unified().use(remarkParse).use(remarkGfm);
+
+/** Blocks that start on their own line; cells inside a row are spaced instead. */
+const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "html"]);
+
+function collectVisibleText(node: MarkdownNode, out: string[]): void {
+	switch (node.type) {
+		// Literal text: code keeps every character, markdown syntax included.
+		case "text":
+		case "inlineCode":
+		case "code":
+		case "html":
+			out.push(node.value ?? "");
+			return;
+		case "image":
+			out.push(node.alt ?? "");
+			return;
+		case "break":
+			out.push("\n");
+			return;
+		// Not drawn.
+		case "definition":
+		case "thematicBreak":
+		case "footnoteDefinition":
+		case "yaml":
+			return;
+	}
+	const blockBreak = BLOCK_NODES.has(node.type);
+	if (blockBreak) out.push("\n");
+	node.children?.forEach((child, index) => {
+		if (node.type === "tableRow" && index > 0) out.push(" ");
+		collectVisibleText(child, out);
+	});
+	if (blockBreak) out.push("\n");
+}
+
 /**
- * Plain text for what a rendered markdown message shows: link targets, emphasis
- * markers, fences and list bullets are syntax, not something the reader can see or
- * would search for.
+ * Plain text for what a rendered markdown message shows. The message is parsed, so
+ * only real markup is dropped: link targets, emphasis markers, fence lines, heading
+ * hashes and list bullets are syntax, while the contents of code spans and fenced
+ * blocks stay literal (`2 ** 3` in code is searched as `2 ** 3`).
  */
 export function markdownVisibleText(markdown: string): string {
-	return markdown
-		.replace(/^\s{0,3}(`{3,}|~{3,})[^\n]*$/gm, "")
-		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-		.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-		.replace(/<(https?:\/\/[^>\s]+)>/g, "$1")
-		.replace(/^\s{0,3}#{1,6}\s+/gm, "")
-		.replace(/^\s{0,3}>\s?/gm, "")
-		.replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "")
-		.replace(/\*\*|~~|`/g, "");
+	try {
+		const out: string[] = [];
+		collectVisibleText(markdownParser.parse(markdown) as MarkdownNode, out);
+		return out.join("");
+	} catch {
+		// A parse failure must not hide the message from search.
+		return markdown;
+	}
 }
 
 function collapseWhitespace(text: string): string {
