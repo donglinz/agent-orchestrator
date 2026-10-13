@@ -503,3 +503,35 @@ func TestAbsorbReportBatchAppendsToSingleQueuedReportTurn(t *testing.T) {
 		t.Fatalf("report header repeated: %q", text)
 	}
 }
+
+// Absorption is an orchestrator behavior: a chat-mode worker with a queued
+// report-batch turn is left untouched and the caller delivers as before.
+func TestAbsorbReportBatchRefusesNonOrchestrator(t *testing.T) {
+	st, workerID := openProvisioningStore(t, domain.SessionProvisionProvisioning)
+	ctx := context.Background()
+	svc := provisioningService(t, st)
+	queued := reportsvc.ReportBatchHeader + "\n\n[done] w1"
+	if _, err := svc.Send(ctx, workerID, ports.ChatUserMessage{
+		Text: queued, Origin: domain.MessageOriginAutomation, ClientMessageID: "report-batch:r1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	absorbed, err := svc.AbsorbReportBatch(ctx, workerID, reportsvc.ReportBatchHeader+"\n\n[done] w2", "report-batch:r2")
+	if err != nil || absorbed {
+		t.Fatalf("worker absorb = %v, %v; want false, nil", absorbed, err)
+	}
+	snapshot, err := svc.Snapshot(ctx, workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Text != queued {
+		t.Fatalf("worker queue changed: %+v", snapshot.Messages)
+	}
+	conversation, err := st.ConversationForSession(ctx, workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := st.QueuedEditDelivery(ctx, conversation.ID, "report-absorb:report-batch:r2"); err != nil || found {
+		t.Fatalf("absorb receipt written for a worker: found=%v err=%v", found, err)
+	}
+}

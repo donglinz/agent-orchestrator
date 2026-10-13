@@ -95,12 +95,17 @@ func (s *Service) EditQueuedTurn(
 
 // AbsorbReportBatch appends a rendered worker-report batch to the session's
 // undispatched report-batch turn instead of queueing another turn behind a busy
-// agent. It reports false, having written nothing, when no such turn is queued
-// and the caller must deliver the batch as a new turn. batchKey is the batch's
+// agent. Only orchestrator sessions absorb. It reports false, having written
+// nothing, when the session is not an orchestrator or no such turn is queued, and
+// the caller must deliver the batch as a new turn. batchKey is the batch's
 // delivery identity and makes a retry idempotent.
 func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, batch, batchKey string) (bool, error) {
-	if _, err := s.requireChatSession(ctx, id); err != nil {
+	record, err := s.requireChatSession(ctx, id)
+	if err != nil {
 		return false, err
+	}
+	if record.Kind != domain.KindOrchestrator {
+		return false, nil
 	}
 	conversation, err := s.store.ConversationForSession(ctx, id)
 	if errors.Is(err, domain.ErrNoConversation) {
