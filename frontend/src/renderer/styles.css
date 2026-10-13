@@ -3170,6 +3170,18 @@ html.sidebar-reordering * {
 	}
 }
 
+/* In-chat find paints matches with the CSS Custom Highlight API (ChatFind), so
+   searching never edits the transcript DOM. The current match is stronger. */
+::highlight(chat-find) {
+	background-color: color-mix(in oklch, var(--color-accent) 22%, transparent);
+	color: inherit;
+}
+
+::highlight(chat-find-active) {
+	background-color: color-mix(in oklch, var(--color-accent) 55%, transparent);
+	color: inherit;
+}
+
 .chat-scroll-viewport {
 	scrollbar-width: none;
 	/* Spacer-driven prompt pinning fights the browser's own scroll anchoring. */

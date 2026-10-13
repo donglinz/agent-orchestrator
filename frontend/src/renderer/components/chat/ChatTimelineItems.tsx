@@ -69,6 +69,7 @@ import { ActivityTitle, ChatMarkdown, OriginPreviewMarkdown, SessionLabelLink, S
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
+import { useChatFindReveal } from "./chatFindReveal";
 import { RenderFrame } from "./RenderFrame";
 import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
 import { ConversationContentItems } from "./ConversationContentItems";
@@ -721,6 +722,8 @@ export function HumanMessage({
  */
 export function OriginMessage({ message }: { message: ConversationMessage }) {
 	const [expanded, setExpanded] = useState(false);
+	// In-chat find opens a long report whose match lies beyond the preview.
+	useChatFindReveal((itemId) => itemId === message.id, () => setExpanded(true));
 	const browserAnnotations = parseBrowserAnnotationMessage(message.text);
 	if (browserAnnotations) {
 		return <BrowserAnnotationOrigin message={message} annotations={browserAnnotations} />;
@@ -1043,11 +1046,16 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	else if (artifactRef) content = <RenderFrame artifact={artifactRef} />;
 	else content = <GenericActivityRow activity={activity} />;
 
-	if (!toolActivity) return content;
+	// The wrapper lets in-chat find locate this row's element by activity id; a row
+	// that renders nothing (a reasoning item with no body) must stay invisible.
 	return (
-		<ActivityTransition value={`${activity.revision}:${activity.summary}:${activity.status}`}>
-			{content}
-		</ActivityTransition>
+		<div data-chat-find-id={activity.id} className="empty:hidden">
+			{toolActivity ? (
+				<ActivityTransition value={`${activity.revision}:${activity.summary}:${activity.status}`}>
+					{content}
+				</ActivityTransition>
+			) : content}
+		</div>
 	);
 }
 
@@ -1125,6 +1133,13 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	// running and already printing opens itself.
 	const streamingOutput = activity.status === "running" && Boolean(detail?.output);
 	const open = override ?? streamingOutput;
+	// In-chat find opens a row whose own text (a command, its files) matched.
+	useChatFindReveal(
+		(itemId) => itemId === activity.id,
+		() => {
+			if (hasBody) setOverride(true);
+		},
+	);
 
 	return (
 		<div
@@ -2354,6 +2369,8 @@ export function SteerMessage({
 	apiBaseUrl?: string | null;
 }) {
 	const [expanded, setExpanded] = useState(false);
+	// In-chat find opens a long report whose match lies beyond the preview.
+	useChatFindReveal((itemId) => itemId === activity.id, () => setExpanded(true));
 	const text = activity.detail?.text ?? activity.summary;
 	const senderSessionId = activity.detail?.senderSessionId?.trim();
 	const senderProjectId = activity.detail?.senderProjectId?.trim();

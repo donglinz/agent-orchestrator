@@ -22,6 +22,7 @@ import {
 	isNonzeroCommandExit,
 } from "./activity-command";
 import { fileChangeFiles, type ConversationActivity } from "../../types/conversation";
+import { useChatFindReveal } from "./chatFindReveal";
 
 export const ActivityRun = memo(function ActivityRun({
 	activities,
@@ -47,6 +48,11 @@ export const ActivityRun = memo(function ActivityRun({
 	};
 	const overrides = disclosureOverrides ?? {};
 	const reducedMotion = useReducedMotion();
+	// In-chat find opens this run when a match is one of its calls.
+	useChatFindReveal(
+		(itemId) => activities.some((activity) => activity.id === itemId),
+		() => updateOverride(disclosureKey ?? "", true),
+	);
 	const running = activities.some((a) => a.status === "running");
 	const nonzeroExits = activities.filter(isNonzeroCommandExit).length;
 	const failed = activities.filter(
@@ -220,6 +226,10 @@ function ActivitySubgroup({
 		if (disclosureKey && onDisclosureChange) onDisclosureChange(disclosureKey, next);
 		else setLocalOverride(next);
 	};
+	useChatFindReveal(
+		(itemId) => activities.some((activity) => activity.id === itemId),
+		() => updateOverride(true),
+	);
 	const hasNestedAgent = activities.some((activity) =>
 		nodesByActivityID.get(activity.id)?.children.length,
 	);
@@ -317,6 +327,7 @@ function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
 	const [open, setOpen] = useState(false);
 	const reducedMotion = useReducedMotion();
 	const count = countNodes(nodes);
+	useChatFindReveal((itemId) => nodeContains(nodes, itemId), () => setOpen(true));
 	const running = nodes.some(nodeRunning);
 	return (
 		<div className="mb-2 overflow-hidden bg-background/40">
@@ -380,6 +391,10 @@ function wouldCreateCycle(
 		current = parentId ? byProvider.get(parentId) : undefined;
 	}
 	return false;
+}
+
+function nodeContains(nodes: ActivityNode[], itemId: string): boolean {
+	return nodes.some((node) => node.activity.id === itemId || nodeContains(node.children, itemId));
 }
 
 function countNodes(nodes: ActivityNode[]): number {
