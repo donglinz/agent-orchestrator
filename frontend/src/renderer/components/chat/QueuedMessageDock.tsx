@@ -207,7 +207,8 @@ function QueuedMessageRowContent({
 	);
 }
 
-function SortableQueuedMessageRow({
+// Memoized so a refresh or a hover on one row does not re-render the whole queue.
+const SortableQueuedMessageRow = memo(function SortableQueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
@@ -297,7 +298,7 @@ function SortableQueuedMessageRow({
 			) : null}
 		</div>
 	);
-}
+});
 
 export const QueuedMessageDock = memo(function QueuedMessageDock({
 	messages,
