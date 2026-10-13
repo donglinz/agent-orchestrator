@@ -143,6 +143,14 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 			controller.sendMu.Unlock()
 			continue
 		}
+		// A handoff closes intake and queue dispatch. Appending would add to a
+		// turn that is about to be settled or replayed by another controller, so
+		// leave the batch to the ordinary path, which refuses and is retried.
+		if controller.handoffActive() {
+			s.mu.RUnlock()
+			controller.sendMu.Unlock()
+			return false, nil
+		}
 		// An interrupt may have returned before its completion is projected;
 		// drain will then cancel every turn requested at or before its cutoff.
 		// The absorbed turn is re-stamped after that cutoff so it survives.

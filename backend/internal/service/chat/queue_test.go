@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -374,5 +375,119 @@ func TestAbsorbReportBatchHoldsControllerPublicationUntilAppendCommits(t *testin
 			t.Fatalf("provider received %q; want the absorbed report turn %q", texts, want)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An absorb racing a controller that starts and drains must be all or nothing:
+// when it reports absorbed, the provider receives the addition; otherwise the
+// provider receives only the original turn and the caller delivers the batch.
+func TestAbsorbReportBatchRacingControllerStartIsAllOrNothing(t *testing.T) {
+	st, _ := openProvisioningStore(t, domain.SessionProvisionReady)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	orchestrator, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		ProvisionState: domain.SessionProvisionProvisioning,
+		CreatedAt:      now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := newFakeConversation()
+	next := 0
+	var idMu sync.Mutex
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st, Reader: fullSnapshotReader(st),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			next++
+			return fmt.Sprintf("absorb-race-%d", next)
+		},
+	})
+	first := reportsvc.ReportBatchHeader + "\n\n[done] w1"
+	if _, err := svc.Send(ctx, orchestrator.ID, ports.ChatUserMessage{
+		Text: first, ClientMessageID: "report-batch:r1", Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	var absorbed bool
+	var absorbErr, startErr error
+	begin := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-begin
+		absorbed, absorbErr = svc.AbsorbReportBatch(ctx, orchestrator.ID,
+			reportsvc.ReportBatchHeader+"\n\n[done] w2", "report-batch:r2")
+	}()
+	go func() {
+		defer wg.Done()
+		<-begin
+		if _, startErr = svc.Start(ctx, chatsvc.StartConfig{
+			SessionID: orchestrator.ID, ProjectID: testProject, Harness: domain.HarnessCodex,
+			WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+		}); startErr == nil {
+			startErr = svc.DrainQueued(ctx, orchestrator.ID)
+		}
+	}()
+	close(begin)
+	wg.Wait()
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), orchestrator.ID) })
+	if absorbErr != nil || startErr != nil {
+		t.Fatalf("absorb err = %v, start err = %v", absorbErr, startErr)
+	}
+
+	want := first
+	if absorbed {
+		want = first + "\n\n[done] w2"
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		texts := provider.sentTexts()
+		if len(texts) == 1 && texts[0] == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("absorbed = %v: provider received %q, want %q", absorbed, texts, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A handoff closes intake and queue dispatch, so nothing is appended while one
+// is armed; the batch takes the ordinary path, and absorption resumes once the
+// handoff is aborted.
+func TestAbsorbReportBatchRefusedDuringHandoff(t *testing.T) {
+	h, _ := steerHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: reportsvc.ReportBatchHeader + "\n\n[done] w1", ClientMessageID: "report-batch:r1",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain); err != nil {
+		t.Fatal(err)
+	}
+	batch := reportsvc.ReportBatchHeader + "\n\n[done] w2"
+	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, batch, "report-batch:r2"); err != nil || absorbed {
+		t.Fatalf("absorb during handoff = %v, %v; want false, nil", absorbed, err)
+	}
+	conversation, err := h.st.ConversationForSession(ctx, testSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := h.st.QueuedEditDelivery(ctx, conversation.ID, "report-absorb:report-batch:r2"); err != nil || found {
+		t.Fatalf("receipt written during handoff: found=%v err=%v", found, err)
+	}
+	h.svc.AbortChatHandoff(testSession)
+	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, batch, "report-batch:r2"); err != nil || !absorbed {
+		t.Fatalf("absorb after abort = %v, %v; want true", absorbed, err)
 	}
 }
