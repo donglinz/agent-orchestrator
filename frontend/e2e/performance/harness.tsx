@@ -1,7 +1,7 @@
 /// <reference path="../../src/renderer/global.d.ts" />
 // Browser-only workload fixture: real AO rendering, deterministic synthetic data.
 // This entry is never imported by the application or included in its build.
-import { type ReactNode } from "react";
+import { Profiler, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
@@ -19,7 +19,12 @@ import { highlight } from "../../src/renderer/lib/code-highlight";
 import { createEventTransport } from "../../src/renderer/lib/event-transport";
 import { useUiStore } from "../../src/renderer/stores/ui-store";
 import { setApiBaseUrl } from "../../src/renderer/lib/api-client";
-import type { ConversationMessage } from "../../src/renderer/types/conversation";
+import type {
+	ConversationItem,
+	ConversationMessage,
+	ConversationSnapshot,
+	ConversationTurn,
+} from "../../src/renderer/types/conversation";
 import "../../src/renderer/styles.css";
 
 const root = createRoot(document.getElementById("performance-root")!);
@@ -54,6 +59,142 @@ function assistant(text: string, streaming = true): ConversationMessage {
 		createdAt: "2026-09-05T00:00:00Z",
 	};
 }
+
+/**
+ * One turn that has been running for hours, with a long queued-message dock behind
+ * it: the shape of an orchestrator that sat in a single poll loop while workers
+ * reported in. Generated, with sizes taken from the incident (about 680 KB of
+ * snapshot JSON, 28 queued report batches), because the shape matters, not the text.
+ */
+function hugeLiveTurnSnapshot(
+	options: { items: number; queued: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; tick?: number },
+): ConversationSnapshot {
+	const at = (second: number) =>
+		new Date(Date.UTC(2026, 9, 14, 0, 0, 0) + second * 1000).toISOString();
+	const turns: ConversationTurn[] = [
+		{
+			id: "turn-live",
+			state: "running",
+			requestedAt: at(0),
+			startedAt: at(1),
+		},
+	];
+	const items: ConversationItem[] = [];
+	let sequence = 0;
+	items.push({
+		kind: "message",
+		id: "huge-prompt",
+		turnId: "turn-live",
+		sequence: (sequence += 1),
+		revision: 0,
+		role: "user",
+		origin: "human",
+		text: "Run the submission loop and poll the workers until every kernel passes.",
+		streaming: false,
+		delivery: "accepted",
+		createdAt: at(1),
+	});
+	for (let index = 0; index < options.items; index += 1) {
+		const second = 2 + index * 7;
+		const kind = index % 4;
+		if (kind === 3) {
+			items.push({
+				kind: "message",
+				id: `huge-reply-${index}`,
+				turnId: "turn-live",
+				sequence: (sequence += 1),
+				revision: 2,
+				role: "assistant",
+				origin: "provider",
+				text:
+					`Poll ${index}: worker ao-${index % 9} reports the benchmark is still running; ` +
+					"checking the board again.\n\n- kernel `gemm_fp8` pending\n- kernel `attn_decode` passing\n\n" +
+					"```bash\nao session ls --project sol-execbench\n```",
+				streaming: false,
+				createdAt: at(second),
+			});
+		} else {
+			items.push({
+				kind: "activity",
+				id: `huge-activity-${index}`,
+				turnId: "turn-live",
+				sequence: (sequence += 1),
+				revision: 0,
+				activityKind: "command",
+				status: "completed",
+				summary: "ao session ls --project sol-execbench",
+				detail: {
+					command: "ao session ls --project sol-execbench",
+					output: Array.from(
+						{ length: options.outputLines ?? 6 },
+						(_, line) => `ao-${line % 9} working kernel ${index}-${line} 00:${line}0 status=running`,
+					).join("\n"),
+					exitCode: 0,
+					durationMs: 120 + (index % 40),
+				},
+				createdAt: at(second),
+			});
+		}
+	}
+	// The live edge of the turn: a streaming reply that grows on every refresh.
+	items.push({
+		kind: "message",
+		id: "huge-live-reply",
+		turnId: "turn-live",
+		sequence: (sequence += 1),
+		revision: options.tick ?? 0,
+		role: "assistant",
+		origin: "provider",
+		text: "Still polling. ".repeat(4 + (options.tick ?? 0)),
+		streaming: options.liveStreaming ?? true,
+		createdAt: at(2 + options.items * 7),
+	});
+	for (let index = 0; index < options.queued; index += 1) {
+		const turnId = `turn-queued-${index}`;
+		turns.push({ id: turnId, state: "queued", requestedAt: at(100 + index) });
+		items.push({
+			kind: "message",
+			id: `huge-queued-${index}`,
+			turnId,
+			sequence: (sequence += 1),
+			revision: 0,
+			role: "user",
+			origin: "human",
+			text:
+				`<ao-worker-reports>\n${Array.from(
+					{ length: options.queuedReports ?? 4 },
+					(_, report) =>
+						`[ao-${(index + report) % 9}] checkpoint: kernel batch ${index}.${report} finished, ` +
+						"results attached, waiting on the next assignment. ".repeat(3),
+				).join("\n")}\n</ao-worker-reports>`,
+			streaming: false,
+			delivery: "queued",
+			createdAt: at(100 + index),
+		});
+	}
+	return {
+		conversationId: "conv-huge",
+		sessionId: "ao-huge",
+		harness: "codex",
+		mode: "chat",
+		controller: { state: "busy" },
+		turns,
+		items,
+		latestSequence: sequence,
+		oldestSequence: 1,
+		// The daemon serves the newest 200 rows; the rest of a long turn is paged in.
+		hasMoreBefore: true,
+		settings: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+		capabilities: ["steer"],
+	};
+}
+
+/** A refetch hands the renderer brand-new objects for every row, even unchanged ones. */
+const refetched = (snapshot: ConversationSnapshot): ConversationSnapshot =>
+	JSON.parse(JSON.stringify(snapshot));
+
+const percentile = (values: number[], fraction: number) =>
+	[...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * fraction))] ?? 0;
 
 export const performanceHarness = {
 	async events() {
@@ -253,8 +394,179 @@ export const performanceHarness = {
 			anchorReads,
 			mountedTurns: scroller.querySelectorAll("[data-chat-scroll-anchor]")
 				.length,
-			maxFrameGapMs: Math.max(...frameGaps),
+			maxFrameGapMs: Math.max(0, ...frameGaps),
 			frameGaps,
+		};
+	},
+	/**
+	 * A huge live turn plus a long queued dock: how expensive is a snapshot refresh,
+	 * a keystroke in the composer, and a scroll through the turn?
+	 */
+	async hugeTurn(
+		options: { items?: number; queued?: number; outputLines?: number; queuedReports?: number; liveStreaming?: boolean; refreshes?: number; phases?: string[] } = {},
+	) {
+		// About 900 rows of live turn (a few pages of the 200-row history the daemon
+		// serves, as after scrolling back) and ~600 KB of snapshot JSON.
+		const items = options.items ?? 900;
+		const queued = options.queued ?? 28;
+		const outputLines = options.outputLines ?? 8;
+		const queuedReports = options.queuedReports ?? 4;
+		const refreshes = options.refreshes ?? 12;
+		const liveStreaming = options.liveStreaming ?? true;
+		const runs = (name: string) => !options.phases || options.phases.includes(name);
+		useUiStore.setState({
+			inspectorSessions: { "ao-huge": { isOpen: false, view: "summary" } },
+		});
+		const commits: { phase: string; actual: number; base: number }[] = [];
+		let phase = "mount";
+		const mount = (snapshot: ConversationSnapshot) =>
+			render(
+				<Profiler
+					id="chat"
+					onRender={(_id, _phase, actual, base) =>
+						commits.push({ phase, actual, base })
+					}
+				>
+					<ChatWorkspace
+						snapshot={snapshot}
+						sessionTitle="Huge live turn"
+						// Fresh arrows on every render, as useConversationCommands hands them out.
+						onSend={() => {}}
+						onPromoteQueuedTurn={async () => {}}
+						onEditQueuedTurn={async () => {}}
+						onCancelQueuedTurn={async () => {}}
+						onReorderQueuedTurns={async () => {}}
+						onSteer={async () => ({ status: "accepted" })}
+					/>
+				</Profiler>,
+			);
+		const first = hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick: 0 });
+		const snapshotBytes = JSON.stringify(first).length;
+		const started = performance.now();
+		mount(first);
+		await document.fonts.ready;
+		await wait(500);
+		const mountMs = performance.now() - started;
+		const scroller = document.querySelector<HTMLElement>(
+			'[role="log"][aria-label="Conversation"]',
+		)!;
+		if (!scroller) throw new Error("Conversation did not mount");
+		const domNodes = document.getElementsByTagName("*").length;
+		// The spec starts the optional CPU profile here, so mounting is not in it.
+		console.debug("ao-perf:profile-start");
+		await wait(50);
+		const sum = (phaseName: string, key: "actual" | "base") =>
+			commits.filter((c) => c.phase === phaseName).reduce((t, c) => t + c[key], 0);
+
+		// 1. Refresh: the live turn gains a little text and the daemon resends it all.
+		phase = "refresh";
+		const refreshWall: number[] = [];
+		for (let tick = 1; runs("refresh") && tick <= refreshes; tick++) {
+			const next = refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick }));
+			const t0 = performance.now();
+			mount(next);
+			refreshWall.push(performance.now() - t0);
+			await frame();
+			await wait(50);
+		}
+		const refreshCommits = commits.filter((c) => c.phase === "refresh");
+
+		// 2. Typing: one character at a time into the real composer.
+		phase = "typing";
+		const editor = document.querySelector<HTMLElement>(
+			'[contenteditable="true"]',
+		);
+		if (!editor) throw new Error("Composer did not mount");
+		editor.focus();
+		await wait(100);
+		const keystrokeMs: number[] = [];
+		for (let index = 0; runs("typing") && index < 40; index++) {
+			const t0 = performance.now();
+			document.execCommand("insertText", false, "abcdefghij"[index % 10]);
+			const handled = performance.now() - t0;
+			await frame();
+			await new Promise<void>((resolve) => {
+				const channel = new MessageChannel();
+				channel.port1.onmessage = () => resolve();
+				channel.port2.postMessage(0);
+			});
+			keystrokeMs.push(performance.now() - t0);
+			void handled;
+			await wait(20);
+		}
+		const typedChars = (editor.textContent ?? "").length;
+
+		// 3. Typing while the live turn refreshes underneath, as in the incident.
+		phase = "typing-while-refreshing";
+		const busyKeystrokeMs: number[] = [];
+		const busyBreakdown: number[][] = [];
+		for (let index = 0; runs("typing-while-refreshing") && index < 20; index++) {
+			mount(refetched(hugeLiveTurnSnapshot({ items, queued, outputLines, queuedReports, liveStreaming, tick: 20 + index })));
+			const t0 = performance.now();
+			document.execCommand("insertText", false, "x");
+			const handledMs = performance.now() - t0;
+			await frame();
+			const rafMs = performance.now() - t0;
+			await new Promise<void>((resolve) => {
+				const channel = new MessageChannel();
+				channel.port1.onmessage = () => resolve();
+				channel.port2.postMessage(0);
+			});
+			busyKeystrokeMs.push(performance.now() - t0);
+			busyBreakdown.push([handledMs, rafMs, performance.now() - t0]);
+			await wait(20);
+		}
+
+		// 4. Scrolling through the turn.
+		phase = "scroll";
+		const frameGaps: number[] = [];
+		let last = await frame();
+		for (let index = 0; runs("scroll") && index < 120; index++) {
+			scroller.scrollTop =
+				((scroller.scrollHeight - scroller.clientHeight) * index) / 119;
+			scroller.dispatchEvent(new Event("scroll"));
+			const now = await frame();
+			frameGaps.push(now - last);
+			last = now;
+		}
+		console.debug("ao-perf:profile-stop");
+		await wait(50);
+		return {
+			items,
+			queued,
+			queuedReports,
+			snapshotBytes,
+			domNodes,
+			mountMs,
+			mountedTurns: scroller.querySelectorAll("[data-chat-scroll-anchor]").length,
+			refresh: {
+				count: refreshCommits.length,
+				wallMedianMs: percentile(refreshWall, 0.5),
+				commitActualMedianMs: percentile(refreshCommits.map((c) => c.actual), 0.5),
+				commitActualMaxMs: Math.max(0, ...refreshCommits.map((c) => c.actual)),
+				commitBaseMedianMs: percentile(refreshCommits.map((c) => c.base), 0.5),
+				totalActualMs: sum("refresh", "actual"),
+				firstCommitsActualMs: refreshCommits.slice(0, 9).map((c) => Math.round(c.actual * 10) / 10),
+			},
+			typing: {
+				typedChars,
+				keystrokeMedianMs: percentile(keystrokeMs, 0.5),
+				keystrokeP95Ms: percentile(keystrokeMs, 0.95),
+				keystrokeMaxMs: Math.max(0, ...keystrokeMs),
+				workspaceCommits: commits.filter((c) => c.phase === "typing").length,
+				workspaceActualMs: sum("typing", "actual"),
+			},
+			typingWhileRefreshing: {
+				keystrokeMedianMs: percentile(busyKeystrokeMs, 0.5),
+				keystrokeP95Ms: percentile(busyKeystrokeMs, 0.95),
+				keystrokeMaxMs: Math.max(0, ...busyKeystrokeMs),
+				medianHandledRafPaintMs: [0, 1, 2].map((column) => percentile(busyBreakdown.map((row) => row[column]!), 0.5)),
+			},
+			scroll: {
+				medianFrameGapMs: percentile(frameGaps, 0.5),
+				p95FrameGapMs: percentile(frameGaps, 0.95),
+				maxFrameGapMs: Math.max(0, ...frameGaps),
+			},
 		};
 	},
 };

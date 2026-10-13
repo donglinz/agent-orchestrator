@@ -938,15 +938,28 @@ function ChatWorkspaceContent({
 			})),
 		[backgroundWakeQueuedTurnIds, localEchos, snapshot.items, snapshot.latestSequence],
 	);
-	const visibleQueuedMessages = useMemo(
-		() => [
-			...queuedMessages.filter((message) => !backgroundWakeQueuedTurnIds.has(message.turnId)),
-			...pendingQueuedMessages,
-		],
-		[backgroundWakeQueuedTurnIds, pendingQueuedMessages, queuedMessages],
+	// Rebuilt whenever the snapshot is, but equal for as long as the queue is: a new
+	// array here would re-render the whole dock on every refresh.
+	const visibleQueuedMessages = useStableValue(
+		useMemo(
+			() => [
+				...queuedMessages.filter((message) => !backgroundWakeQueuedTurnIds.has(message.turnId)),
+				...pendingQueuedMessages,
+			],
+			[backgroundWakeQueuedTurnIds, pendingQueuedMessages, queuedMessages],
+		),
 	);
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
+	// `useConversationCommands` hands out a fresh function on every render. Left raw,
+	// the dock below would rebuild, and re-render every queued row, on each refresh.
+	const stableReorderQueuedTurns = useStableCallback(onReorderQueuedTurns);
+	const reorderQueuedTurnsHandler = useCallback(
+		(turnIds: string[]) => stableReorderQueuedTurns(turnIds) as Promise<unknown>,
+		[stableReorderQueuedTurns],
+	);
+	const reorderQueuedTurns = onReorderQueuedTurns ? reorderQueuedTurnsHandler : undefined;
+	const canEditQueuedTurn = Boolean(onEditQueuedTurn);
 	const [queueEdit, setQueueEdit] = useState<ChatDraftQueuedEdit | undefined>(
 		() => (draftPersistenceAvailable ? withSplitWorkerReports(readChatSessionDraft(draftScope).queuedEdit) : undefined),
 	);
@@ -1421,10 +1434,10 @@ function ChatWorkspaceContent({
 					canSteer={canSteerQueuedMessage}
 					onPromoteQueuedTurn={newWorkDisabled ? undefined : promoteQueuedTurn}
 					onBeginQueuedEdit={
-						newWorkDisabled || !draftPersistenceAvailable || !onEditQueuedTurn ? undefined : beginQueuedEdit
+						newWorkDisabled || !draftPersistenceAvailable || !canEditQueuedTurn ? undefined : beginQueuedEdit
 					}
 					onCancelQueuedTurn={newWorkDisabled ? undefined : handleCancelQueuedTurn}
-					onReorderQueuedTurns={newWorkDisabled ? undefined : onReorderQueuedTurns}
+					onReorderQueuedTurns={newWorkDisabled ? undefined : reorderQueuedTurns}
 					promotePendingTurnId={promoteQueuedTurnPendingTurnId}
 					cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
 				/>
@@ -1433,11 +1446,11 @@ function ChatWorkspaceContent({
 			beginQueuedEdit,
 			canSteerQueuedMessage,
 			cancelQueuedTurnPendingTurnId,
+			canEditQueuedTurn,
 			draftPersistenceAvailable,
 			handleCancelQueuedTurn,
 			newWorkDisabled,
-			onEditQueuedTurn,
-			onReorderQueuedTurns,
+			reorderQueuedTurns,
 			promoteQueuedTurn,
 			promoteQueuedTurnPendingTurnId,
 			queueEdit?.clientMessageId,
@@ -1936,6 +1949,13 @@ function RolledBackNotice({ count }: { count: number }) {
 type TimelineRun =
 	| { kind: "activities"; key: string; items: ConversationItem[] }
 	| { kind: "single"; key: string; items: [ConversationItem] };
+
+const runKey = (run: TimelineRun): string => run.key;
+
+/** The items are identity-stable by the time runs are compared, so a reference check is exact. */
+function sameRun(a: TimelineRun, b: TimelineRun): boolean {
+	return a.kind === b.kind && a.items.length === b.items.length && a.items.every((item, index) => item === b.items[index]);
+}
 
 function runsOf(items: ConversationItem[]): TimelineRun[] {
 	const runs: TimelineRun[] = [];
@@ -4130,7 +4150,7 @@ const TurnGroup = memo(function TurnGroup({
 	const { t } = useTranslation();
 	const hasTerminalFailure =
 		group.outcome?.state === "failed" && Boolean(group.outcome.error);
-	const runs = useMemo(
+	const freshRuns = useMemo(
 		() =>
 			runsOf(
 				group.items.filter((item) => {
@@ -4146,6 +4166,10 @@ const TurnGroup = memo(function TurnGroup({
 			),
 		[group.items, group.liveProviderFailure, group.outcome?.error, hasTerminalFailure],
 	);
+	// A live turn is rebuilt on every refresh, but only its tail changes. Keeping the
+	// runs that did not change lets their memoized rows skip rendering, so a poll
+	// costs the new rows rather than the whole turn.
+	const runs = useStableList(freshRuns, runKey, sameRun);
 	const copyableMessageId = group.live || group.outcome
 		? [...group.items]
 				.reverse()
@@ -4192,9 +4216,8 @@ const TurnGroup = memo(function TurnGroup({
 				disclosureKey={`${group.key}:${run.key}`}
 				disclosureOverrides={activityDisclosureOverrides}
 				onDisclosureChange={onActivityDisclosureChange}
-				activities={run.items.filter(
-					(item): item is ConversationActivity => item.kind === "activity",
-				)}
+				// `runsOf` only folds activities into an activity run.
+				activities={run.items as ConversationActivity[]}
 			/>
 		) : (
 			<TimelineItem
@@ -4365,7 +4388,7 @@ function TurnLiveStatus({
 	return null;
 }
 
-function TimelineItem({
+const TimelineItem = memo(function TimelineItem({
 	item,
 	sessionId,
 	apiBaseUrl,
@@ -4509,7 +4532,7 @@ function TimelineItem({
 		return plan ? <TurnPlan plan={plan} /> : <ActivityRow activity={item} />;
 	}
 	return <ActivityRow activity={item} />;
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /* identity                                                                    */
