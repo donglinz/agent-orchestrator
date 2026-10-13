@@ -7,7 +7,7 @@ import { splitMarkdownBlocks } from "./markdown-blocks";
 
 const render = (text: string) => renderToStaticMarkup(createElement(Markdown, { remarkPlugins: [remarkGfm] }, text));
 // Parsed whole, blocks are separated by "\n" text nodes; parsed apart they are not.
-const normalize = (html: string) => html.replace(/>\s+</g, "><").trim();
+const normalize = (html: string) => html.replace(/>[ \t\n]+</g, "><").trim();
 const renderSplit = (text: string) => splitMarkdownBlocks(text).map(render).join("");
 
 const CORPUS: Record<string, string> = {
@@ -112,3 +112,100 @@ describe("splitMarkdownBlocks", () => {
 		expect(performance.now() - started).toBeLessThan(250);
 	});
 });
+
+// Seeded generator: every run builds the same documents, so a failure reproduces.
+function rng(seed: number) {
+	let state = seed >>> 0;
+	return () => {
+		state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+		return state / 2 ** 32;
+	};
+}
+
+const FRAGMENTS = [
+	"plain words here",
+	"text with **bold** and `code` and [ref] and [label][ref]",
+	"[ref]: /url",
+	"[ref]: /url \"title\"",
+	"> [ref]: /quoted",
+	"- [ref]: /listed",
+	"  [ref]: /indented",
+	"[multi\nline]: /url",
+	"[esc\\]]: /url",
+	"[^n]: footnote",
+	"see[^n] and [multi line] and [esc\\]]",
+	"# heading",
+	"Setext\n======",
+	"Sub\n---",
+	"---",
+	"- a\n- b",
+	"- a\n\n- b",
+	"- a\n\n  more of a",
+	"1. one\n2. two",
+	"3. three",
+	"- [x] task\n- [ ] open",
+	"> quote\n> more",
+	"> quote\n\n> again",
+	"```sh\nls\n\npwd\n```",
+	"```sh\nunclosed\n\nfence",
+	"~~~\n[ref]: /in-fence\n~~~",
+	"````\n```\n````",
+	"    indented code",
+	"| a | b |\n|---|---|\n| 1 | 2 |",
+	"<div>html</div>",
+	"<details>\n<summary>s</summary>\n\nbody\n\n</details>",
+	"a <b>inline</b> html",
+	"one\n\u00a0\ntwo",
+	"\u3000",
+	"\u200b",
+	"\f",
+	" \t ",
+	"line one\nline two",
+	"hard  \nbreak",
+	"* * *",
+	"***bold italic***",
+	"1986\\. A great year",
+];
+const SEPARATORS = ["\n\n", "\n\n", "\n\n", "\n", "\n\n\n", "\n \n", "\r\n\r\n"];
+
+function generate(seed: number): string {
+	const next = rng(seed);
+	const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)]!;
+	const count = 2 + Math.floor(next() * 7);
+	let out = "";
+	for (let i = 0; i < count; i++) out += pick(FRAGMENTS) + pick(SEPARATORS);
+	return next() < 0.5 ? out.trimEnd() : out;
+}
+
+describe("splitMarkdownBlocks against whole-document rendering", () => {
+	const mismatch = (text: string) => {
+		const whole = normalize(render(text));
+		const split = normalize(renderSplit(text));
+		return whole === split ? undefined : { text, whole, split };
+	};
+
+	it("matches on every prefix of generated documents", () => {
+		let splitDocuments = 0;
+		for (let seed = 1; seed <= 150; seed++) {
+			const doc = generate(seed);
+			if (splitMarkdownBlocks(doc).length > 1) splitDocuments++;
+			// A stream grows a character at a time, so check every prefix.
+			for (let end = 1; end <= doc.length; end++) {
+				const failure = mismatch(doc.slice(0, end));
+				if (failure) expect(failure, `seed ${seed}, prefix ${end}`).toBeUndefined();
+			}
+		}
+		// The generator must exercise splitting, not just the refusals.
+		expect(splitDocuments).toBeGreaterThan(15);
+	}, 120_000);
+
+	it("matches on every prefix of the corpus", () => {
+		for (const [name, doc] of Object.entries(CORPUS)) {
+			for (let end = 1; end <= doc.length; end++) {
+				const failure = mismatch(doc.slice(0, end));
+				if (failure) expect(failure, `${name}, prefix ${end}`).toBeUndefined();
+			}
+		}
+	});
+});
+
