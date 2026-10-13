@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labelInlineImages, proseBesideImages, splitInlineImagePaths } from "./messageAttachments";
+import { humanVisibleText, labelInlineImages, proseBesideImages, splitInlineImagePaths, splitWorkerReports } from "./messageAttachments";
 
 const a = ".ao/attachments/attachment-a.png";
 const b = ".ao/attachments/attachment-b.png";
@@ -23,5 +23,20 @@ describe("inline image paths", () => {
 	it("labels attached inline images for one-line surfaces and keeps the reference block", () => {
 		const block = `\n\nAttached files (read these files in the workspace):\n- ${a}\n- ${b}`;
 		expect(labelInlineImages(`make ${b} like ${a}${block}`)).toBe(`make [Image 2] like [Image 1]${block}`);
+	});
+});
+
+describe("worker report envelope", () => {
+	const reports = "\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>";
+
+	it("splits the trailing envelope from the human text and keeps it verbatim", () => {
+		expect(splitWorkerReports(`Please continue${reports}`)).toEqual({ visible: "Please continue", reports });
+		expect(humanVisibleText(`Please continue${reports}`)).toBe("Please continue");
+	});
+
+	it("leaves text without a trailing envelope untouched", () => {
+		const quoted = "see <ao-worker-reports>\nx\n</ao-worker-reports> inline";
+		expect(splitWorkerReports(quoted)).toEqual({ visible: quoted, reports: "" });
+		expect(splitWorkerReports("plain")).toEqual({ visible: "plain", reports: "" });
 	});
 });

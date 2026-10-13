@@ -7,6 +7,25 @@ const ATTACHMENT_REFERENCE_BLOCK =
 const STAGED_ATTACHMENT_PATH = /^\.ao\/attachments\/(?:attachment|image)-[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 
+const WORKER_REPORT_OPEN = "<ao-worker-reports>";
+const WORKER_REPORT_CLOSE = "</ao-worker-reports>";
+
+/**
+ * AO appends queued worker reports to a human message as a trailing envelope for
+ * the agent. `visible` is what a person reads or edits; `reports` is the exact
+ * envelope (with its separator) to re-append so the agent still receives it.
+ */
+export function splitWorkerReports(text: string): { visible: string; reports: string } {
+	if (!text.endsWith(WORKER_REPORT_CLOSE)) return { visible: text, reports: "" };
+	const reportStart = text.lastIndexOf(`\n\n${WORKER_REPORT_OPEN}\n`);
+	if (reportStart < 0) return { visible: text, reports: "" };
+	return { visible: text.slice(0, reportStart), reports: text.slice(reportStart) };
+}
+
+export function humanVisibleText(text: string): string {
+	return splitWorkerReports(text).visible;
+}
+
 export function stagedAttachmentParts(text: string): { body: string; attachments: string[] } {
 	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
 	if (!match?.[1]) return { body: text, attachments: [] };
