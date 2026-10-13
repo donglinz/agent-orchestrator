@@ -490,4 +490,18 @@ func TestAbsorbReportBatchRefusedDuringHandoff(t *testing.T) {
 	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, batch, "report-batch:r2"); err != nil || !absorbed {
 		t.Fatalf("absorb after abort = %v, %v; want true", absorbed, err)
 	}
+
+	// A batch that was already delivered stays delivered while a handoff is
+	// armed, so a retry is not sent down the new-turn path to be queued twice.
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"report-batch:r2", "report-batch:r1"} {
+		if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, batch, key); err != nil || !absorbed {
+			t.Fatalf("retry of delivered %s during handoff = %v, %v; want true", key, absorbed, err)
+		}
+	}
+	if absorbed, err := h.svc.AbsorbReportBatch(ctx, testSession, batch, "report-batch:r3"); err != nil || absorbed {
+		t.Fatalf("new batch during handoff = %v, %v; want false", absorbed, err)
+	}
 }

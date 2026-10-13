@@ -146,10 +146,14 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 		// A handoff closes intake and queue dispatch. Appending would add to a
 		// turn that is about to be settled or replayed by another controller, so
 		// leave the batch to the ordinary path, which refuses and is retried.
+		// A batch already delivered, as its own turn or by an earlier absorb,
+		// stays delivered: reporting false would let a retry queue it again once
+		// intake reopens.
 		if controller.handoffActive() {
+			delivered, err := s.reportBatchDelivered(ctx, conversation.ID, batchKey)
 			s.mu.RUnlock()
 			controller.sendMu.Unlock()
-			return false, nil
+			return delivered, err
 		}
 		// An interrupt may have returned before its completion is projected;
 		// drain will then cancel every turn requested at or before its cutoff.
@@ -162,6 +166,16 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 		controller.sendMu.Unlock()
 		return absorbed, err
 	}
+}
+
+// reportBatchDelivered reports whether a report batch already became its own
+// turn or was absorbed into one, using the same identities as the absorb itself.
+func (s *Service) reportBatchDelivered(ctx context.Context, conversationID, batchKey string) (bool, error) {
+	if _, found, err := s.store.ConversationMessageByClientID(ctx, conversationID, batchKey); err != nil || found {
+		return found, err
+	}
+	_, found, err := s.store.QueuedEditDelivery(ctx, conversationID, "report-absorb:"+batchKey)
+	return found, err
 }
 
 // ReorderQueuedTurns rewrites the durable queue order for undispatched turns.
