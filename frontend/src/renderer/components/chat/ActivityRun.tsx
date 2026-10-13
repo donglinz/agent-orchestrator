@@ -11,7 +11,7 @@
  * changed something" without opening anything.
  */
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -23,7 +23,7 @@ import {
 } from "./activity-command";
 import { fileChangeFiles, type ConversationActivity } from "../../types/conversation";
 
-export function ActivityRun({
+export const ActivityRun = memo(function ActivityRun({
 	activities,
 	disclosureKey,
 	disclosureOverrides,
@@ -172,7 +172,7 @@ export function ActivityRun({
 			</AnimatePresence>
 		</motion.div>
 	);
-}
+});
 
 type ActivitySubgroupData = { key: string; activities: ConversationActivity[] };
 

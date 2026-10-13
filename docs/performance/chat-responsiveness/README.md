@@ -84,6 +84,38 @@ Native development smoke used an isolated daemon at `127.0.0.1:5322`, renderer a
 
 A separate Electron 33.4.11 smoke loaded the built highlighting worker over `app://renderer`, using AO's scheme privileges and the generated production CSP without relaxing it. The returned token tree preserved all 51,000 source characters; see [worker result](built-worker-smoke.json). This tests packaged-origin worker compatibility, not an installer or signed release.
 
+## Huge live turn with a long queue
+
+Turn-level virtualization never windows a single turn, so a long-running turn with many loaded rows mounts all of them. Before this change every refresh of that live turn re-rendered every row, and every refresh also re-rendered each queued-message dock row.
+
+Fixture: `performanceHarness.hugeTurn()` in `frontend/e2e/performance/harness.tsx`: one live turn with 900 loaded rows, 28 queued messages with report batches, and a snapshot of about 600 KB that is rebuilt as fresh objects on each refresh (as a TanStack Query refetch does). Run it with:
+
+```bash
+cd frontend
+AO_PERF_BENCH=1 AO_PERF_CPU_THROTTLE=4 AO_PERF_DIR=/tmp/ao-perf \
+  npx playwright test chat-performance --grep hugeTurn
+```
+
+Optional env: `AO_PERF_OPTIONS` (JSON: `phases`, `refreshes`), `AO_PERF_CPUPROFILE=<path>`, `AO_PERF_TRACE=<path>`.
+
+Profile finding: a refresh changes only the tail of the turn, but `TurnGroup` rebuilt its runs, `TimelineItem` and `ActivityRun` were not memoized, the queue dock rows were not memoized, and `useConversationCommands` passes fresh callbacks each render. The CPU profile of 40 refreshes at 4x throttle attributed about 1010 ms to `ActivityRun`, 249 ms to `TimelineItem` and about 270 ms to the queue dock rows.
+
+Fix: identity-stabilize the runs inside a turn (`useStableList`), memoize `TimelineItem`, `ActivityRun` and the sortable queue rows, and give the queue dock stable callbacks and a stable list. `ChatWorkspace.liveTurnRefresh.test.tsx` pins the behavior: a refetched snapshot with one extra command re-renders at most 2 activity rows (was 41), and an unchanged queue re-renders 0 dock rows (was 6).
+
+| Metric (median, dev-mode React) | Before | After |
+| --- | --- | --- |
+| Refresh wall time, 1x CPU | 30 ms | 12 ms |
+| Refresh wall time, 4x CPU | 230 ms | 61 ms |
+| Max commit during refresh, 1x / 4x | 62 / 287 ms | 11 / 58 ms |
+| Total render time over 12 refreshes, 1x / 4x | 279 / 2078 ms | 135 / 865 ms |
+| CPU profile, 40 refreshes at 4x (`hugeTurn`) | 9642 ms | 2634 ms |
+| Idle keystroke | unchanged | unchanged |
+| Scroll p95 frame, 4x | 24 ms | 18.5 ms |
+
+Caveats: numbers come from dev-mode React, which inflates absolute values (a production-mode run did not work in this harness). Lag was not reproducible at 1x with only 160-200 loaded rows; it needs many loaded rows.
+
+Not fixed: a keystroke while a refresh lands still takes about 55 ms at 4x. That time is the browser's style/layout/paint/layerize work for roughly 8K DOM nodes, not React; `content-visibility: auto` did not help. Removing it needs fewer mounted rows in a live turn, for example windowing or folding older runs ("N earlier steps"), which changes the UX, or an incremental history refresh (see the limits below). The streaming Markdown re-parse is a constant cost independent of turn size.
+
 ## Screenshots
 
 No layout redesign is included. The before/after images show the same long-chat fixture; the native image identifies the isolated app smoke.
