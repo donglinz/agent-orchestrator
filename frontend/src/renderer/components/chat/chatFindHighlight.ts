@@ -65,6 +65,22 @@ export function findTextRanges(root: Element, query: string, limit = MAX_PAINTED
 	return ranges;
 }
 
+/**
+ * The ranges for `query` inside rendered conversation items only. Timeline chrome
+ * between items ("Worked for", "Load earlier messages", scroll buttons) is not in
+ * the data search, so painting it would highlight text the match count ignores.
+ * Items nest (a row inside a turn's item), so only outermost items are walked.
+ */
+export function findItemRanges(root: Element, query: string, limit = MAX_PAINTED_RANGES): Range[] {
+	const ranges: Range[] = [];
+	for (const item of root.querySelectorAll(`[${FIND_ITEM_ATTRIBUTE}]`)) {
+		if (item.parentElement?.closest(`[${FIND_ITEM_ATTRIBUTE}]`)) continue;
+		ranges.push(...findTextRanges(item, query, limit - ranges.length));
+		if (ranges.length >= limit) break;
+	}
+	return ranges;
+}
+
 /** The mounted element for a conversation item, if its row is currently rendered. */
 export function findItemElement(root: ParentNode, itemId: string): HTMLElement | null {
 	const escaped = typeof CSS !== "undefined" && typeof CSS.escape === "function"
@@ -88,7 +104,7 @@ export interface PaintedFind {
 	active?: Range;
 }
 
-/** Replaces the registered highlights with the ranges for `query` under `root`. */
+/** Replaces the registered highlights with the ranges for `query` inside the items under `root`. */
 export function paintFindHighlights(
 	root: Element,
 	query: string,
@@ -97,7 +113,7 @@ export function paintFindHighlights(
 	const registry = highlightRegistry();
 	const Highlight = highlightConstructor();
 	if (!registry || !Highlight) return {};
-	const ranges = findTextRanges(root, query);
+	const ranges = findItemRanges(root, query);
 	const itemElement = current ? findItemElement(root, current.itemId) : null;
 	const active = current && itemElement ? activeRangeIn(itemElement, query, current.ordinal) : undefined;
 	if (ranges.length === 0) {

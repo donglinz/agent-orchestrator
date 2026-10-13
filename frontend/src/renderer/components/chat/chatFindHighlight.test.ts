@@ -5,6 +5,7 @@ import {
 	activeRangeIn,
 	clearFindHighlights,
 	findItemElement,
+	findItemRanges,
 	findTextRanges,
 	paintFindHighlights,
 	scrollRectIntoView,
@@ -87,6 +88,21 @@ describe("paintFindHighlights", () => {
 		expect(registry.get(FIND_HIGHLIGHT)?.ranges).toHaveLength(3);
 		expect(registry.get(FIND_ACTIVE_HIGHLIGHT)?.ranges.map((range) => range.toString())).toEqual(["alpha"]);
 		expect(painted.active?.toString()).toBe("alpha");
+	});
+
+	it("paints only inside items, not the timeline chrome between them", () => {
+		const root = document.createElement("div");
+		root.innerHTML = `
+			<button>Load earlier messages</button>
+			<div data-chat-find-id="turn"><span>Worked for 4s</span><div data-chat-find-id="turn"><p>look for it</p></div></div>
+			<span>Worked for 9s</span>
+		`;
+		document.body.append(root);
+		paintFindHighlights(root, "for");
+		const painted = registry.get(FIND_HIGHLIGHT)?.ranges.map((range) => range.startContainer.nodeValue);
+		// "Worked for 4s" and "look for it" belong to the item; the chrome does not.
+		expect(painted).toEqual(["Worked for 4s", "look for it"]);
+		expect(findItemRanges(root, "load")).toEqual([]);
 	});
 
 	it("drops the current highlight when its item is not mounted", () => {
