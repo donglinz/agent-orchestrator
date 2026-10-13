@@ -29,7 +29,40 @@
 // next fence marker, and misreading that would cut inside a code block or hide a
 // definition behind a "fence". Such text is not split.
 const OPENING_FENCE = /^(`{3,}|~{3,})(.*)$/;
-const CONTAINED_FENCE = /^(?:[ \t]*>|[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+|[ \t]+)+(?:`{3,}|~{3,})/;
+const FENCE_MARKERS = ["```", "~~~"];
+
+// True for a fence marker that follows a container prefix: any run of indentation, ">"
+// and list markers. A scan rather than a regex: a pattern that repeats an optional run of
+// whitespace inside another repetition backtracks exponentially on a long run of spaces.
+function hasContainedFence(content: string): boolean {
+	let i = 0;
+	let prefixed = false;
+	for (;;) {
+		const start = i;
+		while (content[i] === " " || content[i] === "\t") i++;
+		if (i > start) prefixed = true;
+		const char = content[i];
+		if (char === ">") {
+			i++;
+			prefixed = true;
+			continue;
+		}
+		let end = i;
+		if (char === "-" || char === "+" || char === "*") end = i + 1;
+		else if (char !== undefined && char >= "0" && char <= "9") {
+			while (end < i + 9 && content[end]! >= "0" && content[end]! <= "9") end++;
+			if (content[end] === "." || content[end] === ")") end++;
+			else end = i;
+		}
+		// A list marker only counts when whitespace follows it.
+		if (end > i && (content[end] === " " || content[end] === "\t")) {
+			i = end;
+			prefixed = true;
+			continue;
+		}
+		return prefixed && FENCE_MARKERS.some((marker) => content.startsWith(marker, i));
+	}
+}
 // Every definition ends its label with "]:". Matching only that, on any line outside a
 // fence, also catches definitions that start inside a quote or list item, labels that
 // span lines and labels with an escaped bracket. Prose that happens to contain it just
@@ -61,7 +94,7 @@ export function splitMarkdownBlocks(text: string): string[] {
 			previousBlank = false;
 			continue;
 		}
-		if (content.includes(DEFINITION_MARK) || HTML_START.test(content) || CONTAINED_FENCE.test(content)) return [text];
+		if (content.includes(DEFINITION_MARK) || HTML_START.test(content) || hasContainedFence(content)) return [text];
 
 		const blank = BLANK_LINE.test(content);
 		if (!blank) {

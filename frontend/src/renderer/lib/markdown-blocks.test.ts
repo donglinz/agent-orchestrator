@@ -115,6 +115,38 @@ describe("splitMarkdownBlocks", () => {
 		expect(splitMarkdownBlocks("a\n\n<div>b</div>")).toHaveLength(1);
 	});
 
+	it("scans long runs of indentation in linear time", () => {
+		const lines = [
+			" ".repeat(5000),
+			"\t".repeat(5000),
+			" \t".repeat(2500),
+			`${" ".repeat(5000)}text`,
+			`${" ".repeat(5000)}> ${" ".repeat(5000)}- ${" ".repeat(5000)}text`,
+			`${"> ".repeat(2000)}text`,
+			`${"- ".repeat(2000)}text`,
+			`${"1. ".repeat(2000)}text`,
+			`${" ".repeat(5000)}~~`,
+		];
+		for (const line of lines) {
+			for (const text of [line, `one\n\n${line}\n\ntwo`, `${line}\n`]) {
+				const started = performance.now();
+				splitMarkdownBlocks(text);
+				expect(performance.now() - started, line.slice(0, 20)).toBeLessThan(250);
+			}
+		}
+	});
+
+	it("recognises a contained fence behind mixed prefixes", () => {
+		for (const prefix of ["- ", "  - ", "1. ", "12) ", "> ", "> - ", ">> ", "- > ", "\t", " ", "   ", "+ ", "* ", "1.\t"]) {
+			expect(splitMarkdownBlocks(`a\n\n${prefix}~~~\n${prefix}x\n\nb`), prefix).toHaveLength(1);
+			expect(splitMarkdownBlocks(`a\n\n${prefix}\`\`\`\nb`), prefix).toHaveLength(1);
+		}
+		// Not a prefix: no whitespace after the marker, or too many digits.
+		for (const line of ["-~~~", "1.~~~", "1234567890. ~~~"]) {
+			expect(splitMarkdownBlocks(`a\n\n${line}\n\nb`), line).toHaveLength(3);
+		}
+	});
+
 	it("handles a very long reply quickly", () => {
 		const text = Array.from({ length: 5000 }, (_, i) => `paragraph ${i}`).join("\n\n");
 		const started = performance.now();
