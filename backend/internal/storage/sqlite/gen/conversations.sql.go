@@ -3463,6 +3463,49 @@ func (q *Queries) SelectQueuedConversationTurnOrder(ctx context.Context, convers
 	return items, nil
 }
 
+const selectQueuedReportBatchMessage = `-- name: SelectQueuedReportBatchMessage :one
+SELECT conversation_messages.id, conversation_messages.conversation_id, conversation_messages.turn_id, conversation_messages.sequence, conversation_messages.revision, conversation_messages.role, conversation_messages.origin, conversation_messages.text, conversation_messages.streaming, conversation_messages.provider_item_id, conversation_messages.client_message_id, conversation_messages.created_at, conversation_messages.updated_at, conversation_messages.delivery_content_json, conversation_messages.branch_id, conversation_messages.client_payload_hash, conversation_messages.sender_session_id, conversation_messages.sender_project_id, conversation_messages.sender_display_name
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_messages.role = 'user'
+  AND conversation_messages.origin = 'automation'
+  AND conversation_messages.client_message_id LIKE 'report-batch:%'
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NULL
+ORDER BY conversation_turns.requested_at DESC, conversation_turns.rowid DESC
+LIMIT 1
+`
+
+// Newest undispatched daemon-authored report batch, the one a later report
+// batch is appended to instead of queueing another turn.
+func (q *Queries) SelectQueuedReportBatchMessage(ctx context.Context, conversationID string) (ConversationMessage, error) {
+	row := q.db.QueryRowContext(ctx, selectQueuedReportBatchMessage, conversationID)
+	var i ConversationMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.TurnID,
+		&i.Sequence,
+		&i.Revision,
+		&i.Role,
+		&i.Origin,
+		&i.Text,
+		&i.Streaming,
+		&i.ProviderItemID,
+		&i.ClientMessageID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveryContentJson,
+		&i.BranchID,
+		&i.ClientPayloadHash,
+		&i.SenderSessionID,
+		&i.SenderProjectID,
+		&i.SenderDisplayName,
+	)
+	return i, err
+}
+
 const selectReservedConversationTurnForPromotion = `-- name: SelectReservedConversationTurnForPromotion :one
 SELECT conversation_turns.id,
        conversation_messages.text,

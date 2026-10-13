@@ -20,6 +20,9 @@ import (
 // ReportInterruptWindow is the durable per-worker urgent interruption limit.
 const ReportInterruptWindow = 3 * time.Minute
 
+// ReportBatchHeader opens every rendered report batch.
+const ReportBatchHeader = "Reports since your previous turn:"
+
 // ErrReportDeliveryModeUnsupported reports a target without semantic delivery.
 var ErrReportDeliveryModeUnsupported = errors.New("report delivery requires a semantic conversation")
 
@@ -299,7 +302,7 @@ func (b PreparedBatch) IdempotencyKey() string {
 // Render formats compact attributed report context for an orchestrator.
 func (b PreparedBatch) Render() string {
 	var out strings.Builder
-	out.WriteString("Reports since your previous turn:")
+	out.WriteString(ReportBatchHeader)
 	for _, report := range coalesceReports(b.Reports) {
 		state := string(report.State)
 		if state == "" {
