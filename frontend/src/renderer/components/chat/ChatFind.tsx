@@ -32,6 +32,7 @@ import {
 	indexOfMatch,
 	isSearchableQuery,
 	locateMatch,
+	normalizeFindQuery,
 	searchChatItems,
 	stepMatch,
 } from "./chatFindSearch";
@@ -103,6 +104,9 @@ export function ChatFind({
 
 	// Matching reads the data on a deferred copy so a streaming turn never makes
 	// typing wait for a re-scan.
+	// Navigation keys off the needle, not the raw text, so a space typed at either
+	// end of the query is not a new query and never moves the current match.
+	const needle = normalizeFindQuery(query);
 	const deferredGroups = useDeferredValue(groups);
 	const result = useMemo(
 		() => (open ? searchChatItems(deferredGroups, query) : searchChatItems([], "")),
@@ -251,7 +255,7 @@ export function ChatFind({
 		// A new query repositions, and so does the first match arriving for a query
 		// that had none (older history loading in). Further streaming must not move
 		// the reader.
-	}, [open, query, result.total > 0]);
+	}, [open, needle, result.total > 0]);
 
 	// Paint highlights over whatever is mounted, and keep them current as rows
 	// mount, unmount, expand, or stream.

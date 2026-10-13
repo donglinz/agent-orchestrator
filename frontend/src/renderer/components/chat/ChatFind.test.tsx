@@ -238,6 +238,27 @@ describe("ChatFind search and stepping", () => {
 		await waitFor(() => expect(reveal).toHaveBeenLastCalledWith("a1"));
 	});
 
+	it("keeps the current match when only spaces around the query change", async () => {
+		const { reveal, scrollToGroup } = setup();
+		const { input } = await openAndType("alpha");
+		const count = screen.getByTestId("chat-find-count");
+		await waitFor(() => expect(count).toHaveTextContent("1 of 3"));
+		await act(async () => {});
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(count).toHaveTextContent("2 of 3");
+		const reveals = reveal.mock.calls.length;
+		const scrolls = scrollToGroup.mock.calls.length;
+
+		await userEvent.type(input, " ");
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, FIND_DEBOUNCE_MS + 60));
+		});
+		expect(input).toHaveValue("alpha ");
+		expect(count).toHaveTextContent("2 of 3");
+		expect(reveal.mock.calls.length).toBe(reveals);
+		expect(scrollToGroup.mock.calls.length).toBe(scrolls);
+	});
+
 	it("steps with Cmd+G and Shift+Cmd+G from the field and from the chat", async () => {
 		setup();
 		const { input, composer } = await openAndType("alpha");
