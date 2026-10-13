@@ -301,6 +301,13 @@ describe("markdownVisibleText code and syntax", () => {
 		expect(total("<div>alpha</div>\n\n<div>beta</div>", "</div><div>")).toBe(0);
 		expect(total("<div>alpha</div>\n\n<div>beta</div>", "alpha</div>")).toBe(1);
 		expect(total("a<b>c</b>", "a<b>c")).toBe(1);
+		// Fence + html and html + paragraph, in both orders.
+		expect(total("```\nalpha\n```\n\n<div>beta</div>", "alpha<div>")).toBe(0);
+		expect(total("```\nalpha\n```\n\n<div>beta</div>", "alpha <div>beta")).toBe(1);
+		expect(total("<div>alpha</div>\n\n```\nbeta\n```", "</div>beta")).toBe(0);
+		expect(total("<div>alpha</div>\n\nbeta", "</div>beta")).toBe(0);
+		expect(total("<div>alpha</div>\n\nbeta", "</div> beta")).toBe(1);
+		expect(total("alpha\n\n<div>beta</div>", "alpha<div>")).toBe(0);
 	});
 });
 
