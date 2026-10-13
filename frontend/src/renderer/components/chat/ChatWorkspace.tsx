@@ -4275,12 +4275,15 @@ const TurnGroup = memo(function TurnGroup({
 	const windowedBefore = useRef(false);
 	if (runs.length > CHAT_WINDOW_TURN_RUNS) windowedBefore.current = true;
 	const windowed = windowedBefore.current;
-	const renderWorkedRun = (run: TimelineRun) =>
+	// Rows keep their wrapper wherever the turn puts them next. A run that moves between
+	// the worked list, the notices and the final answer would otherwise change element
+	// type under the same key, remounting it and dropping the reader's selection.
+	const renderWorkedRun = (run: TimelineRun, keepMounted = false) =>
 		windowed && !rendersNothing(run) ? (
 			<WindowedRow
 				key={run.key}
 				itemIds={run.items.map((item) => item.id).join(" ")}
-				pinned={Boolean(messageEdit) && isHumanRun(run.items[0])}
+				pinned={keepMounted || (Boolean(messageEdit) && isHumanRun(run.items[0]))}
 			>
 				{renderRun(run)}
 			</WindowedRow>
@@ -4310,7 +4313,7 @@ const TurnGroup = memo(function TurnGroup({
 	}
 	const outcome = showSettledStatus ? group.outcome : undefined;
 	if (!outcome) {
-		body.push(...workedRuns.map(renderWorkedRun));
+		body.push(...workedRuns.map((run) => renderWorkedRun(run)));
 	} else {
 		const disclosureKey = `${group.key}:worked`;
 		body.push(
@@ -4320,12 +4323,13 @@ const TurnGroup = memo(function TurnGroup({
 				open={Boolean(activityDisclosureOverrides[disclosureKey])}
 				onOpenChange={(open) => onActivityDisclosureChange(disclosureKey, open)}
 			>
-				{foldedRuns.length > 0 ? foldedRuns.map(renderWorkedRun) : undefined}
+				{foldedRuns.length > 0 ? foldedRuns.map((run) => renderWorkedRun(run)) : undefined}
 			</TurnWorkSummary>,
 		);
 	}
-	if (outcome) body.push(...noticeRuns.map(renderRun));
-	if (finalRun) body.push(renderRun(finalRun));
+	if (outcome) body.push(...noticeRuns.map((run) => renderWorkedRun(run)));
+	// The answer is what the reader is looking at when a turn completes: keep it mounted.
+	if (finalRun) body.push(renderWorkedRun(finalRun, true));
 	return (
 		<div className="flex min-w-0 flex-col gap-2.5">
 			{body}

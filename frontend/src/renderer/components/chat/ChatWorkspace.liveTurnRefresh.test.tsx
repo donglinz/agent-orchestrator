@@ -45,8 +45,10 @@ function render(ui: ReactElement) {
 const at = (second: number) => new Date(Date.UTC(2026, 9, 14) + second * 1000).toISOString();
 
 /** One running turn of `pairs` reply/command pairs, with `queued` messages waiting behind it. */
-function liveTurn(pairs: number, queued: number, extraCommands = 0): ConversationSnapshot {
-	const turns: ConversationTurn[] = [{ id: "turn-live", state: "running", requestedAt: at(0), startedAt: at(1) }];
+function liveTurn(pairs: number, queued: number, extraCommands = 0, state: "running" | "completed" = "running"): ConversationSnapshot {
+	const turns: ConversationTurn[] = [
+		{ id: "turn-live", state, requestedAt: at(0), startedAt: at(1), ...(state === "completed" ? { completedAt: at(999) } : {}) },
+	];
 	const items: ConversationItem[] = [];
 	let sequence = 0;
 	items.push({
@@ -134,5 +136,23 @@ describe("a live turn refresh", () => {
 		expect(boxes.some((box) => box.dataset.chatWindowItems === "reply-39")).toBe(true);
 		// The prompt that opened the turn is never windowed.
 		expect(boxes.some((box) => box.dataset.chatWindowItems === "prompt")).toBe(false);
+	});
+
+	it("keeps the final reply mounted when a windowed turn completes", async () => {
+		const view = render(<ChatWorkspace snapshot={liveTurn(40, 0)} {...callbacks()} />);
+		await act(async () => {});
+		const reply = screen.getByText("Poll 39.");
+		reply.dataset.mountMarker = "original";
+
+		view.rerender(<ChatWorkspace snapshot={refetched(liveTurn(40, 0, 0, "completed"))} {...callbacks()} />);
+		await act(async () => {});
+
+		// Same element, not a copy: the answer was not unmounted and recreated.
+		expect(screen.getByText("Poll 39.")).toBe(reply);
+		expect(reply.isConnected).toBe(true);
+		// A remount would build a fresh element without the marker, and drop any
+		// selection and child state the reader had in the answer.
+		expect(reply.dataset.mountMarker).toBe("original");
+		expect(reply.closest("[data-chat-window-items]")).not.toBeNull();
 	});
 });
