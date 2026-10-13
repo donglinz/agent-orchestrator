@@ -105,7 +105,13 @@ function holdsReaderState(element: HTMLElement): boolean {
 	if (element.contains(document.activeElement)) return true;
 	if (element.querySelector('[aria-expanded="true"]')) return true;
 	const selection = window.getSelection();
-	return Boolean(selection && !selection.isCollapsed && selection.anchorNode && element.contains(selection.anchorNode));
+	// Any overlap counts: a selection across several rows has its ends in two of them
+	// and the rest of the rows in between inside it.
+	if (!selection || selection.isCollapsed) return false;
+	for (let index = 0; index < selection.rangeCount; index += 1) {
+		if (selection.getRangeAt(index).intersectsNode(element)) return true;
+	}
+	return false;
 }
 
 function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

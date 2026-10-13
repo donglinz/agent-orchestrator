@@ -102,6 +102,37 @@ describe("WindowedRow", () => {
 		expect(screen.getByText("row content")).toBeInTheDocument();
 	});
 
+	it("keeps every row a text selection touches, not only the one it started in", () => {
+		const root = createRef<HTMLElement>() as RefObject<HTMLElement | null>;
+		render(
+			<div ref={root as RefObject<HTMLDivElement>}>
+				<ChatScrollRootContext.Provider value={root}>
+					{["first", "middle", "last", "elsewhere"].map((name) => (
+						<WindowedRow key={name} itemIds={name} pinned={false}>
+							<p>{name} text</p>
+						</WindowedRow>
+					))}
+				</ChatScrollRootContext.Provider>
+			</div>,
+		);
+		const observer = observers.at(-1)!;
+		const box = (name: string) => document.querySelector<HTMLElement>(`[data-chat-window-items="${name}"]`)!;
+		const range = document.createRange();
+		range.setStart(screen.getByText("first text").firstChild!, 2);
+		range.setEnd(screen.getByText("last text").firstChild!, 2);
+		window.getSelection()?.removeAllRanges();
+		window.getSelection()?.addRange(range);
+
+		for (const name of ["first", "middle", "last", "elsewhere"]) observer.report(box(name), false, 50);
+
+		// The two ends and the row between them hold the selection; the untouched row goes.
+		expect(screen.getByText("first text")).toBeInTheDocument();
+		expect(screen.getByText("middle text")).toBeInTheDocument();
+		expect(screen.getByText("last text")).toBeInTheDocument();
+		expect(screen.queryByText("elsewhere text")).not.toBeInTheDocument();
+		window.getSelection()?.removeAllRanges();
+	});
+
 	it("keeps a row that holds focus", () => {
 		const { observer, box } = mountRow();
 		screen.getByText("row content").focus();
