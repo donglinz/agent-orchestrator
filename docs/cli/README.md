@@ -161,6 +161,13 @@ after their native prompt hook reports acceptance of the exact durable batch
 identity. A successful terminal write is never acknowledgement. Reports remain
 pending for TUI adapters that cannot expose this semantic boundary.
 
+A Chat orchestrator keeps at most one undispatched report turn. While the
+orchestrator is busy, later report batches are appended to that queued turn
+instead of queueing another, so a long turn is followed by one turn carrying
+every pending report. Once the turn is dispatched the next batch starts a new
+one. A report belongs to exactly one delivery (the queued report turn or a
+user-message piggyback), so none is repeated.
+
 `GET /api/v1/reports?projectId=<id>` is the read-only persisted report
 projection. Consumers such as Project Summary can read ordered report facts
 and outputs through it without claiming, acknowledging, waking, or interrupting

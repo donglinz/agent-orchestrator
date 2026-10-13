@@ -448,3 +448,58 @@ func TestControllerPublishedWhileProvisioningCannotOvertakeQueuedPrompt(t *testi
 		t.Fatalf("provider received %v, want only the opening prompt first", got)
 	}
 }
+
+// A busy orchestrator keeps one queued report turn that later report batches
+// are appended to, instead of one queued turn per batch.
+func TestAbsorbReportBatchAppendsToSingleQueuedReportTurn(t *testing.T) {
+	st, _ := openProvisioningStore(t, domain.SessionProvisionReady)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	orchestrator, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		ProvisionState: domain.SessionProvisionProvisioning,
+		CreatedAt:      now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := provisioningService(t, st)
+	batch := func(body string) string { return reportsvc.ReportBatchHeader + "\n\n" + body }
+
+	absorbed, err := svc.AbsorbReportBatch(ctx, orchestrator.ID, batch("[done] w1"), "report-batch:r1")
+	if err != nil || absorbed {
+		t.Fatalf("absorb with nothing queued = %v, %v; want false", absorbed, err)
+	}
+	if _, err := svc.Send(ctx, orchestrator.ID, ports.ChatUserMessage{
+		Text: batch("[done] w1"), Origin: domain.MessageOriginAutomation, ClientMessageID: "report-batch:r1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct{ key, body string }{{"report-batch:r2", "[stuck] w2"}, {"report-batch:r3", "[needs_input] w3"}} {
+		absorbed, err := svc.AbsorbReportBatch(ctx, orchestrator.ID, batch(step.body), step.key)
+		if err != nil || !absorbed {
+			t.Fatalf("absorb %s = %v, %v; want true", step.key, absorbed, err)
+		}
+	}
+	// A retried batch is not appended twice.
+	if absorbed, err := svc.AbsorbReportBatch(ctx, orchestrator.ID, batch("[stuck] w2"), "report-batch:r2"); err != nil || !absorbed {
+		t.Fatalf("retried absorb = %v, %v; want true", absorbed, err)
+	}
+
+	snapshot, err := svc.Snapshot(ctx, orchestrator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Messages) != 1 {
+		t.Fatalf("queued messages = %d, want one report turn: %+v", len(snapshot.Messages), snapshot.Messages)
+	}
+	text := snapshot.Messages[0].Text
+	want := reportsvc.ReportBatchHeader + "\n\n[done] w1\n\n[stuck] w2\n\n[needs_input] w3"
+	if text != want {
+		t.Fatalf("report turn text = %q, want %q", text, want)
+	}
+	if strings.Count(text, reportsvc.ReportBatchHeader) != 1 {
+		t.Fatalf("report header repeated: %q", text)
+	}
+}

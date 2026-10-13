@@ -1004,6 +1004,21 @@ WHERE conversation_messages.conversation_id = ?
   AND conversation_turns.state = 'queued'
   AND conversation_turns.promotion_started_at IS NULL;
 
+-- Newest undispatched daemon-authored report batch, the one a later report
+-- batch is appended to instead of queueing another turn.
+-- name: SelectQueuedReportBatchMessage :one
+SELECT conversation_messages.*
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_messages.role = 'user'
+  AND conversation_messages.origin = 'automation'
+  AND conversation_messages.client_message_id LIKE 'report-batch:%'
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NULL
+ORDER BY conversation_turns.requested_at DESC, conversation_turns.rowid DESC
+LIMIT 1;
+
 -- Rewrite text and content together, only if the edited revision is current.
 -- name: UpdateQueuedConversationMessageText :execrows
 UPDATE conversation_messages

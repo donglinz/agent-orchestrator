@@ -1187,6 +1187,21 @@ func (d reportSemanticDelivery) Submit(ctx context.Context, id domain.SessionID,
 	if d.sessions == nil {
 		return reportsvc.ErrReportDeliveryModeUnsupported
 	}
+	// A chat orchestrator mid-turn keeps one queued report batch that absorbs
+	// later batches, so a long turn is followed by a single report turn.
+	if d.chat != nil && d.store != nil {
+		if rec, ok, err := d.store.GetSession(ctx, id); err != nil {
+			return err
+		} else if ok && domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+			absorbed, err := d.chat.AbsorbReportBatch(ctx, id, message, idempotencyKey)
+			if err != nil {
+				return err
+			}
+			if absorbed {
+				return nil
+			}
+		}
+	}
 	return d.sessions.SendSemantic(ctx, id, message, idempotencyKey)
 }
 

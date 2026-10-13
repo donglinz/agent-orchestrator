@@ -781,6 +781,67 @@ func TestUpdateQueuedTurnMessage(t *testing.T) {
 	}
 }
 
+func TestAbsorbQueuedReportBatch(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	queueMessage := func(turnID, clientID string, origin domain.MessageOrigin, at time.Time) {
+		t.Helper()
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: turnID + " text", Origin: origin, ClientMessageID: clientID,
+			}, turnID, at)
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+	absorb := func(key, addition string) bool {
+		t.Helper()
+		ok, err := s.AbsorbQueuedReportBatch(ctx, conversation, key, addition, histClock.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("absorb %s: %v", key, err)
+		}
+		return ok
+	}
+
+	// Nothing queued: the caller must deliver the batch as its own turn.
+	if absorb("report-batch:b1", "ignored") {
+		t.Fatal("absorbed without a queued report batch")
+	}
+	// A human message, even one with a lookalike client id, is never a target.
+	queueMessage("human", "report-batch:human", domain.MessageOriginHuman, histClock)
+	if absorb("report-batch:b1", "ignored") {
+		t.Fatal("absorbed into a human message")
+	}
+	queueMessage("batch-1", "report-batch:b0", domain.MessageOriginAutomation, histClock.Add(time.Second))
+
+	if !absorb("report-batch:b1", "second batch") || !absorb("report-batch:b2", "third batch") {
+		t.Fatal("report batches were not absorbed into the queued batch")
+	}
+	// Retries are idempotent, including a retry of the batch's own turn.
+	if !absorb("report-batch:b1", "second batch") || !absorb("report-batch:b0", "first again") {
+		t.Fatal("retry was not recognized as already delivered")
+	}
+	message, found, err := s.ConversationMessageByClientID(ctx, conversation, "report-batch:b0")
+	if err != nil || !found {
+		t.Fatalf("queued batch message: found=%v err=%v", found, err)
+	}
+	if want := "batch-1 text\n\nsecond batch\n\nthird batch"; message.Text != want {
+		t.Fatalf("queued batch text = %q, want %q", message.Text, want)
+	}
+
+	// Once the batch is reserved for dispatch it is closed to appends, but the
+	// receipt still answers a retry of an already absorbed batch.
+	if _, err := s.ReserveQueuedTurnForPromotion(ctx, conversation, "batch-1", histClock.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if absorb("report-batch:b3", "late") {
+		t.Fatal("absorbed into a batch already being dispatched")
+	}
+	if !absorb("report-batch:b2", "third batch") {
+		t.Fatal("receipt lost after dispatch")
+	}
+}
+
 func TestCancelQueuedTurnByIDHidesMessageFromSnapshot(t *testing.T) {
 	s, session, conversation := conversationFixture(t)
 	ctx := context.Background()

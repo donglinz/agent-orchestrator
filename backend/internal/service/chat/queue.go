@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/report"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
@@ -90,6 +91,32 @@ func (s *Service) EditQueuedTurn(
 		return err
 	}
 	return controller.EditQueuedTurn(ctx, turnID, edit)
+}
+
+// AbsorbReportBatch appends a rendered worker-report batch to the session's
+// undispatched report-batch turn instead of queueing another turn behind a busy
+// agent. It reports false, having written nothing, when no such turn is queued
+// and the caller must deliver the batch as a new turn. batchKey is the batch's
+// delivery identity and makes a retry idempotent.
+func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, batch, batchKey string) (bool, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return false, err
+	}
+	conversation, err := s.store.ConversationForSession(ctx, id)
+	if errors.Is(err, domain.ErrNoConversation) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// The drain lock keeps the append from landing after a queued turn's text
+	// was read for dispatch but before the turn is promoted.
+	if controller, err := s.Controller(id); err == nil {
+		controller.sendMu.Lock()
+		defer controller.sendMu.Unlock()
+	}
+	addition := strings.TrimSpace(strings.TrimPrefix(batch, reportsvc.ReportBatchHeader))
+	return s.store.AbsorbQueuedReportBatch(ctx, conversation.ID, batchKey, addition, s.now())
 }
 
 // ReorderQueuedTurns rewrites the durable queue order for undispatched turns.
