@@ -242,8 +242,10 @@ export function ChatFind({
 			return;
 		}
 		goTo(firstMatchFromGroup(latestResult, latestGroups, viewportGroupIndex() ?? 0));
-		// Only a new query repositions; streaming results must not move the reader.
-	}, [open, query]);
+		// A new query repositions, and so does the first match arriving for a query
+		// that had none (older history loading in). Further streaming must not move
+		// the reader.
+	}, [open, query, result.total > 0]);
 
 	// Paint highlights over whatever is mounted, and keep them current as rows
 	// mount, unmount, expand, or stream.

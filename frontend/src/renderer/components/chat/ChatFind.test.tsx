@@ -40,11 +40,13 @@ const groups: ChatFindGroup[] = [
 ];
 
 function Harness({
+	data = groups,
 	hasOlder,
 	scrollToGroup,
 	viewportGroupIndex = () => 0,
 	store,
 }: {
+	data?: ChatFindGroup[];
 	hasOlder?: boolean;
 	scrollToGroup: (key: string) => void;
 	viewportGroupIndex?: () => number;
@@ -70,7 +72,7 @@ function Harness({
 						rootRef={rootRef}
 						scrollerRef={scrollerRef}
 						contentRef={contentRef}
-						groups={groups}
+						groups={data}
 						hasOlder={hasOlder}
 						revealStore={store}
 						scrollToGroup={scrollToGroup}
@@ -217,6 +219,23 @@ describe("ChatFind search and stepping", () => {
 		expect(reveal).toHaveBeenLastCalledWith("a1");
 		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 		expect(count).toHaveTextContent("3 of 3");
+	});
+
+	it("jumps to the first match when it arrives after a search that had none", async () => {
+		const store = createChatFindRevealStore();
+		const reveal = vi.spyOn(store, "reveal");
+		const scrollToGroup = vi.fn();
+		const view = render(<Harness data={[]} scrollToGroup={scrollToGroup} store={store} />);
+		const composer = screen.getByLabelText("Composer");
+		composer.focus();
+		fireEvent.keyDown(composer, cmd("f"));
+		await userEvent.type(await screen.findByRole("textbox", { name: "Find in chat" }), "alpha");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("No results"));
+		expect(reveal).not.toHaveBeenCalled();
+
+		view.rerender(<Harness scrollToGroup={scrollToGroup} store={store} />);
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 3"));
+		await waitFor(() => expect(reveal).toHaveBeenLastCalledWith("a1"));
 	});
 
 	it("steps with Cmd+G and Shift+Cmd+G from the field and from the chat", async () => {
