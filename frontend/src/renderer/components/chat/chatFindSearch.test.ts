@@ -292,6 +292,16 @@ describe("markdownVisibleText code and syntax", () => {
 		// Code keeps its literal characters, the fence lines excepted.
 		expect(total("```\na ** b\n```", "a ** b")).toBe(1);
 	});
+
+	it("keeps blocks apart across skipped nodes and block html", () => {
+		// A thematic break or link definition draws nothing but still ends a block.
+		expect(total("```\nalpha\n```\n\n---\n\n```\nbeta\n```", "alphabeta")).toBe(0);
+		expect(total("```\nalpha\n```\n\n[a]: http://x\n\n```\nbeta\n```", "alphabeta")).toBe(0);
+		// Block-level html stands alone; inline html stays inside its sentence.
+		expect(total("<div>alpha</div>\n\n<div>beta</div>", "</div><div>")).toBe(0);
+		expect(total("<div>alpha</div>\n\n<div>beta</div>", "alpha</div>")).toBe(1);
+		expect(total("a<b>c</b>", "a<b>c")).toBe(1);
+	});
 });
 
 describe("match navigation helpers", () => {

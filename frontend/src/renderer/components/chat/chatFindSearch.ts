@@ -58,15 +58,22 @@ interface MarkdownNode {
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
 /** Blocks that start on their own line; cells inside a row are spaced instead. */
-const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "footnoteDefinition"]);
+const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "table", "tableRow", "footnoteDefinition"]);
 
-function collectVisibleText(node: MarkdownNode, out: string[]): void {
+/** Inline (phrasing) parents: an `html` node inside one is a tag fragment, not a block. */
+const PHRASING_PARENTS = new Set(["paragraph", "heading", "tableCell", "emphasis", "strong", "delete", "link", "linkReference"]);
+
+function collectVisibleText(node: MarkdownNode, out: string[], parent?: MarkdownNode): void {
 	switch (node.type) {
 		// Literal text: code keeps every character, markdown syntax included.
 		case "text":
 		case "inlineCode":
-		case "html":
 			out.push(node.value ?? "");
+			return;
+		// Raw HTML is literal too. At block level it stands alone like a fence.
+		case "html":
+			if (parent && PHRASING_PARENTS.has(parent.type)) out.push(node.value ?? "");
+			else out.push("\n", node.value ?? "", "\n");
 			return;
 		// A fenced or indented block is literal too, but it is a block: remark strips
 		// the newline around its value, so it needs its own separators or two
@@ -81,17 +88,18 @@ function collectVisibleText(node: MarkdownNode, out: string[]): void {
 		case "break":
 			out.push("\n");
 			return;
-		// Not drawn.
+		// Not drawn, but still a block boundary: text on either side stays apart.
 		case "definition":
 		case "thematicBreak":
 		case "yaml":
+			out.push("\n");
 			return;
 	}
 	const blockBreak = BLOCK_NODES.has(node.type);
 	if (blockBreak) out.push("\n");
 	node.children?.forEach((child, index) => {
 		if (node.type === "tableRow" && index > 0) out.push(" ");
-		collectVisibleText(child, out);
+		collectVisibleText(child, out, node);
 	});
 	if (blockBreak) out.push("\n");
 }
