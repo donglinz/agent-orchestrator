@@ -8,7 +8,7 @@ import { AppLink } from "../AppLink";
  * re-sorting. Those belong to the daemon.
  */
 
-import { stagedAttachmentParts, attachmentName, attachmentURL, IMAGE_ATTACHMENT_PATH, splitInlineImagePaths } from "./messageAttachments";
+import { stagedAttachmentParts, attachmentName, attachmentURL, humanVisibleText, IMAGE_ATTACHMENT_PATH, splitInlineImagePaths } from "./messageAttachments";
 import { ChatImage } from "./ChatImage";
 import {
 	ACCENT_ACTION_SEGMENT,
@@ -528,17 +528,9 @@ function formatMessageTimestamp(iso: string, now = new Date()): string {
 /* messages                                                                    */
 /* -------------------------------------------------------------------------- */
 
+export { humanVisibleText };
+
 /** What the user typed. Right-aligned and enclosed so it reads as theirs. */
-const WORKER_REPORT_OPEN = "<ao-worker-reports>";
-const WORKER_REPORT_CLOSE = "</ao-worker-reports>";
-
-export function humanVisibleText(text: string): string {
-	if (!text.endsWith(WORKER_REPORT_CLOSE)) return text;
-	const reportStart = text.lastIndexOf(`\n\n${WORKER_REPORT_OPEN}\n`);
-	if (reportStart < 0) return text;
-	return text.slice(0, reportStart);
-}
-
 export function HumanMessage({
 	message,
 	sessionId,
@@ -2370,7 +2362,7 @@ export function SteerMessage({
 	const senderHref = senderSessionId && senderProjectId
 		? `ao://sessions/${encodeURIComponent(senderProjectId)}/${encodeURIComponent(senderSessionId)}`
 		: undefined;
-	const visibleText = senderSessionId ? stripSteerSenderPrefix(text, senderSessionId) : text;
+	const visibleText = humanVisibleText(senderSessionId ? stripSteerSenderPrefix(text, senderSessionId) : text);
 	const { body, attachments } = stagedAttachmentParts(visibleText);
 	const longReport = body.length > ORIGIN_REPORT_COLLAPSE_AT;
 	const preview = longReport

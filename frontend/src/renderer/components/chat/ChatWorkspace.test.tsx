@@ -5001,6 +5001,23 @@ describe("durable queued edits", () => {
 		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("independent prompt");
 	});
 
+	it("edits a queued message without its worker report envelope but still delivers it", async () => {
+		const reports = "\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>";
+		const snapshot = queuedSnapshot();
+		const item = snapshot.items[0] as ConversationMessage;
+		snapshot.items = [{ ...item, text: `queued text${reports}` }];
+		const save = vi.fn().mockResolvedValue(undefined);
+		render(<ChatWorkspace snapshot={snapshot} onSend={vi.fn()} onEditQueuedTurn={save} />);
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).queryByText(/Reports since your previous turn/)).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("queued text");
+		expect(screen.getByLabelText("Message the agent")).not.toHaveTextContent("ao-worker-reports");
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), " updated");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(save).toHaveBeenCalledWith("queued", `queued text updated${reports}`, expect.any(Object)));
+	});
+
 	it("finishes an ordinary send before allowing a queued editor to replace it", async () => {
 		const snapshot = queuedSnapshot();
 		let settle!: (paths: string[]) => void;

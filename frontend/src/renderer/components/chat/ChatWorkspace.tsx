@@ -127,7 +127,7 @@ import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatImageSourceProvider } from "./chat-image-source";
 import { ChatComposer, type ChatComposerHandle, type StoredComposerAttachment } from "./ChatComposer";
 import { ContextMeter } from "./ContextMeter";
-import { stagedAttachmentParts, attachmentName } from "./messageAttachments";
+import { stagedAttachmentParts, attachmentName, splitWorkerReports } from "./messageAttachments";
 import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { SessionStartup } from "./SessionStartup";
@@ -1023,8 +1023,14 @@ function ChatWorkspaceContent({
 					nativeImages: currentEdit.nativeImages ?? Boolean(nativeImages),
 				}, currentEdit.revision);
 				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("chat.draft.queuePrepareFailed");
+				// The editor only shows the human-visible text; the worker-report
+				// envelope on the queued message is still owed to the agent.
+				const queuedMessage = queuedMessages.find((entry) => entry.turnId === queueEdit.turnId)?.message;
+				// An otherwise empty edit must still be rejected rather than kept alive by the envelope.
+				const hasContent = text.trim() !== "" || Boolean(attachments?.length) || Boolean(retainedContent?.length);
+				const deliveredText = queuedMessage && hasContent ? text + splitWorkerReports(queuedMessage.text).reports : text;
 				try {
-					await onEditQueuedTurn(queueEdit.turnId, text, {
+					await onEditQueuedTurn(queueEdit.turnId, deliveredText, {
 						clientMessageId: prepared.draft.queuedEdit.clientMessageId,
 						...(attachments?.length ? { attachments } : {}),
 						retainedContent: queueEdit.attachments === undefined ? undefined : retainedContent,
