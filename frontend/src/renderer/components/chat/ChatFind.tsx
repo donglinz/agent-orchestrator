@@ -118,7 +118,10 @@ export function ChatFind({
 		navigationToken.current += 1;
 		window.clearTimeout(navigationTimer.current);
 		navigationTimer.current = undefined;
-	}, []);
+		// A navigation that never reached its settle pass must not leave a request
+		// that would reopen a disclosure mounted later.
+		revealStore.clear();
+	}, [revealStore]);
 
 	const navigate = useCallback(
 		(location: ChatFindLocation, searchQuery: string) => {
@@ -153,11 +156,14 @@ export function ChatFind({
 					return;
 				}
 				place(element);
-				revealStore.clear();
+				// The request stays pending past this render: a row that is already
+				// mounted (a visible command, say) opens itself from it, and the settle
+				// pass re-aims once the disclosure has grown.
 				navigationTimer.current = window.setTimeout(() => {
 					if (token !== navigationToken.current) return;
 					const settled = contentRef.current && findItemElement(contentRef.current, itemId);
 					if (settled) place(settled);
+					revealStore.clear();
 				}, SETTLE_DELAY_MS);
 			};
 			attempt();

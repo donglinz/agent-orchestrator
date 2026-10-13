@@ -137,4 +137,15 @@ describe("a live turn refresh", () => {
 		// The find wrappers, highlight painting and reveal store add no row renders.
 		expect(renders.activityRows).toBeLessThanOrEqual(2);
 	});
+
+	it("opens a command row that is already on screen when find reaches it", async () => {
+		render(<ChatWorkspace snapshot={liveTurn(5, 0)} {...callbacks()} />);
+		await act(async () => {});
+		// A running turn shows its commands unfolded, but each one's own text is behind its row.
+		expect(screen.queryByText("ao session ls 3", { selector: "pre" })).toBeNull();
+
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "f", ctrlKey: true });
+		await userEvent.type(screen.getByRole("textbox", { name: "Find in chat" }), "ls 3");
+		expect(await screen.findByText("ao session ls 3", { selector: "pre" })).toBeInTheDocument();
+	});
 });
