@@ -58,7 +58,7 @@ interface MarkdownNode {
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
 /** Blocks that start on their own line; cells inside a row are spaced instead. */
-const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "html"]);
+const BLOCK_NODES = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "table", "tableRow", "html", "footnoteDefinition"]);
 
 function collectVisibleText(node: MarkdownNode, out: string[]): void {
 	switch (node.type) {
@@ -70,6 +70,7 @@ function collectVisibleText(node: MarkdownNode, out: string[]): void {
 			out.push(node.value ?? "");
 			return;
 		case "image":
+		case "imageReference":
 			out.push(node.alt ?? "");
 			return;
 		case "break":
@@ -78,7 +79,6 @@ function collectVisibleText(node: MarkdownNode, out: string[]): void {
 		// Not drawn.
 		case "definition":
 		case "thematicBreak":
-		case "footnoteDefinition":
 		case "yaml":
 			return;
 	}

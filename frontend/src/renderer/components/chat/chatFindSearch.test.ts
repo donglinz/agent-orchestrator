@@ -264,6 +264,14 @@ describe("markdownVisibleText code and syntax", () => {
 		}
 	});
 
+	it("reads footnote bodies and reference-image alt text, which the transcript renders", () => {
+		const text = "Claim[^1] and ![diagram alt][pic]\n\n[^1]: The footnote body.\n\n[pic]: https://example.com/pic.png";
+		expect(total(text, "footnote body")).toBe(1);
+		expect(total(text, "diagram alt")).toBe(1);
+		expect(total(text, "example.com")).toBe(0);
+		expect(total(text, "[^1]")).toBe(0);
+	});
+
 	it("reads table cells as text", () => {
 		expect(total("| a | b |\n| - | - |\n| needle | 2 |", "needle")).toBe(1);
 		expect(total("| a | b |\n| - | - |\n| needle | 2 |", "|")).toBe(0);
