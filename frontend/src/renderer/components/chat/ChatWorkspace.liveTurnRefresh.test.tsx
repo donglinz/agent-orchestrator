@@ -1,4 +1,5 @@
-import { act, render as rtlRender, screen } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -118,5 +119,22 @@ describe("a live turn refresh", () => {
 
 		expect(screen.getByText("Poll 5.")).toBeInTheDocument();
 		expect(renders.queuedRows).toBe(0);
+	});
+
+	it("keeps the refresh cost with in-chat find open on a query", async () => {
+		const view = render(<ChatWorkspace snapshot={liveTurn(40, 0)} {...callbacks()} />);
+		await act(async () => {});
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "f", ctrlKey: true });
+		await userEvent.type(screen.getByRole("textbox", { name: "Find in chat" }), "Poll");
+		await screen.findByText(/^1 of 4\d$/);
+		await act(async () => {});
+
+		renders.activityRows = 0;
+		view.rerender(<ChatWorkspace snapshot={refetched(liveTurn(40, 0, 1))} {...callbacks()} />);
+		await act(async () => {});
+
+		expect(screen.getByText("Poll 40.")).toBeInTheDocument();
+		// The find wrappers, highlight painting and reveal store add no row renders.
+		expect(renders.activityRows).toBeLessThanOrEqual(2);
 	});
 });
