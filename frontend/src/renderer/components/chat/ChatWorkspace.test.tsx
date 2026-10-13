@@ -5178,6 +5178,47 @@ describe("in-chat find", () => {
 
 	const mountedItem = (id: string) => document.querySelector(`[data-chat-find-id="${id}"]`);
 
+	const longReport = (term: string) => `${"Worker status line.\n".repeat(40)}Final note: ${term} was the cause.`;
+
+	it("expands a long worker report when the match lies beyond its preview", async () => {
+		const snapshot = chatFixtureLongHistory(2);
+		const turnId = snapshot.turns[0]!.id;
+		snapshot.items.push({
+			kind: "message", id: "report-1", turnId, sequence: snapshot.latestSequence + 1, revision: 0,
+			role: "user", origin: "automation", text: longReport("narwhal-unique"), streaming: false,
+			createdAt: "2026-10-14T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		expect(screen.queryByText(/narwhal-unique/)).toBeNull();
+
+		await userEvent.type(openFind(), "narwhal-unique");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 1"));
+		await waitFor(() => expect(mountedItem("report-1")).toHaveTextContent("narwhal-unique"));
+		expect(screen.getByRole("button", { name: /hide report/i })).toBeInTheDocument();
+	});
+
+	it("expands a long sender-attributed steer when the match lies beyond its preview", async () => {
+		const snapshot = chatFixtureLongHistory(2);
+		const turnId = snapshot.turns[0]!.id;
+		snapshot.items.push({
+			kind: "activity", id: "steer-1", turnId, sequence: snapshot.latestSequence + 1, revision: 0,
+			activityKind: "system", status: "completed", summary: "Steered", createdAt: "2026-10-14T00:00:00Z",
+			detail: {
+				event: "steer",
+				text: longReport("axolotl-unique"),
+				senderSessionId: "worker-9",
+				senderProjectId: "proj",
+				senderDisplayName: "worker 9",
+			},
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		expect(screen.queryByText(/axolotl-unique/)).toBeNull();
+
+		await userEvent.type(openFind(), "axolotl-unique");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 1"));
+		await waitFor(() => expect(mountedItem("steer-1")).toHaveTextContent("axolotl-unique"));
+	});
+
 	it("finds a tool call folded inside a settled turn and opens the folds around it", async () => {
 		const snapshot = chatFixtureLongHistory(8);
 		const target = snapshot.items.find((item) => item.id === "ha-3-1");

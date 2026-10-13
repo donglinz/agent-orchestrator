@@ -722,6 +722,8 @@ export function HumanMessage({
  */
 export function OriginMessage({ message }: { message: ConversationMessage }) {
 	const [expanded, setExpanded] = useState(false);
+	// In-chat find opens a long report whose match lies beyond the preview.
+	useChatFindReveal((itemId) => itemId === message.id, () => setExpanded(true));
 	const browserAnnotations = parseBrowserAnnotationMessage(message.text);
 	if (browserAnnotations) {
 		return <BrowserAnnotationOrigin message={message} annotations={browserAnnotations} />;
@@ -2367,6 +2369,8 @@ export function SteerMessage({
 	apiBaseUrl?: string | null;
 }) {
 	const [expanded, setExpanded] = useState(false);
+	// In-chat find opens a long report whose match lies beyond the preview.
+	useChatFindReveal((itemId) => itemId === activity.id, () => setExpanded(true));
 	const text = activity.detail?.text ?? activity.summary;
 	const senderSessionId = activity.detail?.senderSessionId?.trim();
 	const senderProjectId = activity.detail?.senderProjectId?.trim();
