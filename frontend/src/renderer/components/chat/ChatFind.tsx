@@ -334,9 +334,11 @@ export function ChatFind({
 			closeFind();
 		} else if (event.key === "Enter") {
 			event.preventDefault();
-			// A pending debounce is flushed first; the new query lands on its first match.
+			// A pending debounce is flushed first; a changed query lands on its first
+			// match. An edit that only moved spaces around is the same query, so Enter
+			// still steps.
 			if (value !== query) setQuery(value);
-			else step(event.shiftKey ? -1 : 1);
+			if (normalizeFindQuery(value) === needle) step(event.shiftKey ? -1 : 1);
 		} else if (shortcut === "open") {
 			event.preventDefault();
 			inputRef.current?.select();

@@ -259,6 +259,20 @@ describe("ChatFind search and stepping", () => {
 		expect(scrollToGroup.mock.calls.length).toBe(scrolls);
 	});
 
+	it("steps on Enter even when a pending edit only added spaces", async () => {
+		const { reveal } = setup();
+		const { input } = await openAndType("alpha");
+		const count = screen.getByTestId("chat-find-count");
+		await waitFor(() => expect(count).toHaveTextContent("1 of 3"));
+		await act(async () => {});
+
+		// A space typed and Enter pressed before the debounce commits it.
+		fireEvent.change(input, { target: { value: "alpha " } });
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(count).toHaveTextContent("2 of 3");
+		expect(reveal).toHaveBeenLastCalledWith("a2");
+	});
+
 	it("steps with Cmd+G and Shift+Cmd+G from the field and from the chat", async () => {
 		setup();
 		const { input, composer } = await openAndType("alpha");
