@@ -629,6 +629,117 @@ func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	}
 }
 
+func TestSessionCleanup_PreviewKeepsOnlyUnfinishedTerminatedWorkspaces(t *testing.T) {
+	for _, project := range []string{"demo", ""} {
+		t.Run("project="+project, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			log := &sessionRequestLog{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				log.append(r)
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/sessions" {
+					http.NotFound(w, r)
+					return
+				}
+				var sessions []sessionDTO
+				for _, scope := range []string{"demo", "other"} {
+					if project != "" && scope != project {
+						continue
+					}
+					for _, disposition := range []string{"removed", "not_applicable", "pending", "preserved_dirty", "failed", "unknown", ""} {
+						suffix := disposition
+						if suffix == "" {
+							suffix = "legacy"
+						}
+						sessions = append(sessions, sessionDTO{ID: scope + "-" + suffix, ProjectID: scope, IsTerminated: true, WorkspaceCleanup: disposition})
+					}
+					sessions = append(sessions, sessionDTO{ID: scope + "-live", ProjectID: scope, IsTerminated: false})
+				}
+				if err := json.NewEncoder(w).Encode(sessionListResponse{Sessions: sessions}); err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			writeRunFileFor(t, cfg, srv)
+			args := []string{"session", "cleanup", "--dry-run"}
+			wantRequest := "GET /api/v1/sessions?active=false"
+			if project != "" {
+				args = append(args, "--project", project)
+				wantRequest += "&project=" + project
+			}
+			out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, scope := range []string{"demo", "other"} {
+				for _, disposition := range []string{"removed", "not_applicable", "live"} {
+					if strings.Contains(out, scope+"-"+disposition) {
+						t.Fatalf("preview included completed/live session:\n%s", out)
+					}
+				}
+				for _, disposition := range []string{"pending", "preserved_dirty", "failed", "unknown", ""} {
+					suffix := disposition
+					if suffix == "" {
+						suffix = "legacy"
+					}
+					if strings.Contains(out, scope+"-"+suffix) != (project == "" || project == scope) {
+						t.Fatalf("unfinished %s/%s scope mismatch:\n%s", scope, disposition, out)
+					}
+				}
+			}
+			if got := log.all(); !reflect.DeepEqual(got, []string{wantRequest}) {
+				t.Fatalf("requests = %v, want preview only", got)
+			}
+		})
+	}
+}
+
+func TestSessionCleanup_RepeatAfterLegacyAlreadyGoneDoesNotPost(t *testing.T) {
+	for _, project := range []string{"demo", ""} {
+		t.Run("project="+project, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			log := &sessionRequestLog{}
+			disposition := ""
+			var mu sync.Mutex
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				log.append(r)
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions":
+					if err := json.NewEncoder(w).Encode(sessionListResponse{Sessions: []sessionDTO{{ID: "demo-old", ProjectID: "demo", IsTerminated: true, WorkspaceCleanup: disposition}}}); err != nil {
+						t.Error(err)
+					}
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/cleanup":
+					disposition = "removed"
+					_, _ = io.WriteString(w, `{"cleaned":[],"alreadyGone":["demo-old"],"skipped":[]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			writeRunFileFor(t, cfg, srv)
+			args := []string{"session", "cleanup", "--yes"}
+			if project != "" {
+				args = append(args, "--project", project)
+			}
+			deps := Deps{ProcessAlive: func(int) bool { return true }}
+			first, _, err := executeCLI(t, deps, args...)
+			if err != nil || !strings.Contains(first, "Already gone:") {
+				t.Fatalf("first cleanup = %s, err=%v", first, err)
+			}
+			second, _, err := executeCLI(t, deps, args...)
+			if err != nil || !strings.Contains(second, "No sessions to clean up.") || strings.Contains(second, "Would clean") {
+				t.Fatalf("repeat cleanup = %s, err=%v", second, err)
+			}
+			if got := log.all(); len(got) != 3 || !strings.HasPrefix(got[2], "GET ") {
+				t.Fatalf("requests = %v, want GET/POST/GET without repeat POST", got)
+			}
+		})
+	}
+}
+
 // TestSessionCleanup_ReportsAlreadyGoneWorkspacesSeparately: a workspace whose
 // directory was already missing tears down without error but reclaims nothing.
 // Folding it into the cleaned count is what lets a batch run report hundreds of

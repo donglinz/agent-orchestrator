@@ -5015,13 +5015,8 @@ func TestCleanup_WorkspaceProjectDestroysChildrenBeforeRoot(t *testing.T) {
 	}
 }
 
-// TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone is the multi-repo
-// half of the false-count fix. A workspace project's teardown succeeds on every
-// later run — the worktrees are gone, so there is nothing left to fail on — and
-// counting those runs as reclaimed is exactly the report that made a batch
-// cleanup look like it freed disk it never touched. The second run here must
-// land in AlreadyGone.
-func TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone(t *testing.T) {
+// Completed multi-repo cleanup is remembered without deleting archived history.
+func TestCleanup_WorkspaceProjectRepeatRunIsNoOp(t *testing.T) {
 	m, st, _, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
@@ -5042,10 +5037,6 @@ func TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone(t *testing.T) {
 		t.Fatalf("first run alreadyGone = %v, want none", first.AlreadyGone)
 	}
 
-	// The first run removed both directories, so every repo is now absent —
-	// which is what the adapter reports on the second run.
-	ws.destroyReclaim = ports.WorkspaceReclaimAlreadyAbsent
-
 	second, err := m.Cleanup(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)
@@ -5053,11 +5044,14 @@ func TestCleanup_WorkspaceProjectRepeatRunReportsAlreadyGone(t *testing.T) {
 	if len(second.Cleaned) != 0 {
 		t.Fatalf("second run cleaned = %v, want none: both worktrees were already gone", second.Cleaned)
 	}
-	if len(second.AlreadyGone) != 1 || second.AlreadyGone[0] != "mer-1" {
-		t.Fatalf("second run alreadyGone = %v, want [mer-1]", second.AlreadyGone)
+	if len(second.AlreadyGone) != 0 {
+		t.Fatalf("second run alreadyGone = %v, want none: cleanup is already complete", second.AlreadyGone)
 	}
 	if len(second.Skipped) != 0 {
 		t.Fatalf("second run skipped = %v, want none: teardown did not fail", second.Skipped)
+	}
+	if ws.destroyed != 2 {
+		t.Fatalf("destroyed = %d, want only the original two repo removals", ws.destroyed)
 	}
 }
 
