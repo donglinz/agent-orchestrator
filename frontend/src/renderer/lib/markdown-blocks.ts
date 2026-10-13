@@ -28,10 +28,15 @@ const OPENING_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 // span lines and labels with an escaped bracket. Prose that happens to contain it just
 // isn't split.
 const DEFINITION_MARK = "]:";
+// A blank line holds only spaces and tabs. String.trim also strips NBSP and other Unicode
+// space, which Markdown treats as text.
+const BLANK_LINE = /^[ \t]*$/;
 const HTML_START = /^ {0,3}</;
 const LIST_MARKER = /^(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/;
 
 export function splitMarkdownBlocks(text: string): string[] {
+	// A bare carriage return is a line ending to Markdown but not to this scanner.
+	if (/\r(?!\n)/.test(text)) return [text];
 	const pieces: string[] = [];
 	let pieceStart = 0;
 	let fence: { closing: RegExp } | undefined;
@@ -51,7 +56,7 @@ export function splitMarkdownBlocks(text: string): string[] {
 		}
 		if (content.includes(DEFINITION_MARK) || HTML_START.test(content)) return [text];
 
-		const blank = content.trim() === "";
+		const blank = BLANK_LINE.test(content);
 		if (!blank) {
 			const opening = OPENING_FENCE.exec(content);
 			const startsFence = opening && !(opening[1]![0] === "`" && opening[2]!.includes("`"));

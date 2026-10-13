@@ -35,6 +35,11 @@ const CORPUS: Record<string, string> = {
 	referenceLinkMultilineLabel: "[foo bar]\n\ntext\n\n[foo\nbar]: /url",
 	referenceLinkEscapedBracket: "[foo]]\n\ntext\n\n[foo\\]]: /url",
 	referenceLinkInFence: "[foo]\n\n```\n[foo]: /url\n```\n\ntext",
+	nbspLine: "one\n\u00a0\ntwo",
+	unicodeSpaceLines: "one\n\u3000\ntwo\n\u2003\nthree\n\u200b\nfour",
+	formFeedAndVerticalTabLines: "one\n\f\ntwo\n\v\nthree",
+	spacesAndTabsBlank: "one\n \t \ntwo\n\t\nthree",
+	bareCarriageReturns: "one\r\rtwo\r\r- three",
 	footnote: "a[^1]\n\ntext\n\n[^1]: note",
 	html: "<details>\n<summary>s</summary>\n\nbody\n\n</details>\n\nafter",
 	inlineHtml: "a <b>b</b>\n\nc",
@@ -73,6 +78,13 @@ describe("splitMarkdownBlocks", () => {
 		const next = splitMarkdownBlocks("one\n\ntwo and more\n\nthree");
 		expect(next[0]).toBe(first[0]);
 		expect(next).toHaveLength(3);
+	});
+
+	it("treats only spaces and tabs as a blank line", () => {
+		expect(splitMarkdownBlocks("one\n\u00a0\ntwo")).toHaveLength(1);
+		expect(splitMarkdownBlocks("one\n\u3000\ntwo")).toHaveLength(1);
+		expect(splitMarkdownBlocks("one\n \t\ntwo")).toHaveLength(2);
+		expect(splitMarkdownBlocks("one\r\rtwo")).toHaveLength(1);
 	});
 
 	it("does not cut inside a list or an indented block", () => {
