@@ -7,6 +7,8 @@
  * only locates the matching text inside that item's element.
  */
 
+import { findNeedlePattern } from "./chatFindQuery";
+
 export const FIND_HIGHLIGHT = "chat-find";
 export const FIND_ACTIVE_HIGHLIGHT = "chat-find-active";
 /** Attribute on every rendered item's element, carrying its conversation item id. */
@@ -35,14 +37,13 @@ export function supportsFindHighlights(): boolean {
 const SKIPPED_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT"]);
 
 /**
- * Every case-insensitive occurrence of `query` inside single text nodes of `root`,
- * in document order. Matches are not joined across element boundaries, so a query
+ * Every occurrence of `query` (normalized exactly as the data search does, see
+ * `chatFindQuery.ts`) inside single text nodes of `root`, in document order. Matches are not joined across element boundaries, so a query
  * spanning bold and plain text is found by the data search but not painted.
  */
 export function findTextRanges(root: Element, query: string, limit = MAX_PAINTED_RANGES): Range[] {
-	// The same needle the data search uses: trimmed, inner whitespace collapsed.
-	const needle = query.trim().replace(/\s+/g, " ").toLowerCase();
-	if (!needle) return [];
+	const pattern = findNeedlePattern(query);
+	if (!pattern) return [];
 	const ranges: Range[] = [];
 	const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
 		acceptNode(node) {
@@ -52,15 +53,14 @@ export function findTextRanges(root: Element, query: string, limit = MAX_PAINTED
 		},
 	});
 	for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-		const text = (node.nodeValue ?? "").toLowerCase();
-		let from = text.indexOf(needle);
-		while (from !== -1) {
+		pattern.lastIndex = 0;
+		const text = node.nodeValue ?? "";
+		for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
 			const range = root.ownerDocument.createRange();
-			range.setStart(node, from);
-			range.setEnd(node, from + needle.length);
+			range.setStart(node, match.index);
+			range.setEnd(node, match.index + match[0].length);
 			ranges.push(range);
 			if (ranges.length >= limit) return ranges;
-			from = text.indexOf(needle, from + needle.length);
 		}
 	}
 	return ranges;

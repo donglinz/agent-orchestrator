@@ -13,7 +13,10 @@
 
 import type { ConversationItem } from "../../types/conversation";
 import { fileChangeFiles, isCompaction, isSteer } from "../../types/conversation";
+import { isSearchableQuery, normalizeFindQuery } from "./chatFindQuery";
 import { humanVisibleText, stagedAttachmentParts } from "./messageAttachments";
+
+export { isSearchableQuery, normalizeFindQuery };
 
 /** A turn-sized block of items, as the timeline groups them. */
 export interface ChatFindGroup {
@@ -38,11 +41,6 @@ export interface ChatFindResult {
 }
 
 export const EMPTY_FIND_RESULT: ChatFindResult = { query: "", hits: [], total: 0 };
-
-/** The query is only searched once it has something visible in it. */
-export function isSearchableQuery(query: string): boolean {
-	return query.trim().length > 0;
-}
 
 /**
  * Plain text for what a rendered markdown message shows: link targets, emphasis
@@ -107,14 +105,6 @@ function normalizedText(item: ConversationItem): string {
 		normalizedCache.set(item, cached);
 	}
 	return cached;
-}
-
-/**
- * The needle a query searches for: lowercased, inner whitespace collapsed, ends
- * trimmed. A space typed while composing the next word must not change the match.
- */
-export function normalizeFindQuery(query: string): string {
-	return collapseWhitespace(query.trim()).toLowerCase();
 }
 
 function countOccurrences(haystack: string, needle: string): number {

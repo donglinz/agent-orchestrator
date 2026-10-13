@@ -12,6 +12,7 @@ import {
 	searchChatItems,
 	stepMatch,
 } from "./chatFindSearch";
+import { findItemRanges } from "./chatFindHighlight";
 
 let sequence = 0;
 
@@ -53,6 +54,35 @@ function activity(id: string, summary: string, overrides: Partial<ConversationAc
 const group = (key: string, ...items: ConversationItem[]): ChatFindGroup => ({ key, items });
 
 describe("searchChatItems", () => {
+	it("gives the same count and painted ranges for queries that differ only in spaces", () => {
+		// The rendered DOM keeps its original spacing; the data search collapses it.
+		const texts = ["foo bar and Foo  bar", "FOO\nbar", "foo", "foo baz"];
+		const items = texts.map((text, index) => human(`m${index}`, text));
+		const root = document.createElement("div");
+		for (const [index, text] of texts.entries()) {
+			const node = document.createElement("div");
+			node.setAttribute("data-chat-find-id", `m${index}`);
+			node.textContent = text;
+			root.append(node);
+		}
+		const outcome = (query: string) => ({
+			total: searchChatItems([group("g", ...items)], query).total,
+			painted: findItemRanges(root, query).map((range) => range.toString()),
+		});
+		const expected = outcome("foo bar");
+		expect(expected.total).toBe(3);
+		expect(expected.painted).toEqual(["foo bar", "Foo  bar", "FOO\nbar"]);
+		for (const variant of ["foo bar ", " foo bar", "  FOO   bar  ", "foo\tbar"]) {
+			expect(outcome(variant)).toEqual(expected);
+		}
+		const single = outcome("foo");
+		for (const variant of ["foo ", " foo", "  foo  "]) {
+			expect(outcome(variant)).toEqual(single);
+		}
+		expect(single.total).toBe(single.painted.length);
+		expect(outcome("   ")).toEqual({ total: 0, painted: [] });
+	});
+
 	it("ignores spaces around the query, so a trailing space changes nothing", () => {
 		const items = [human("a", "the quick fox"), human("b", "quick")];
 		const total = (query: string) => searchChatItems([group("g", ...items)], query).total;
