@@ -84,7 +84,9 @@ describe("reasoning", () => {
 		const { container } = render(
 			<ActivityRow activity={activity({ activityKind: "reasoning", detail: {} })} />,
 		);
-		expect(container).toBeEmptyDOMElement();
+		// The find-locator wrapper is the only element, and it is empty (and hidden by CSS).
+		expect(container.firstElementChild).toHaveAttribute("data-chat-find-id");
+		expect(container.firstElementChild).toBeEmptyDOMElement();
 	});
 });
 
