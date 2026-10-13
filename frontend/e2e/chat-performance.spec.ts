@@ -41,6 +41,12 @@ test.describe("live renderer performance workloads", () => {
 			// profiled; other workloads are profiled whole.
 			const cpuProfilePath = process.env.AO_PERF_CPUPROFILE;
 			let profile: unknown;
+			// Console markers fire handlers that cannot be awaited inline. Chain their CDP
+			// work so start always precedes stop and the test can await all of it.
+			let pendingCdp: Promise<unknown> = Promise.resolve();
+			const enqueueCdp = (work: () => Promise<unknown>) => {
+				pendingCdp = pendingCdp.then(work);
+			};
 			let browserMetrics: Record<string, number> | undefined;
 			const startProfile = async () => {
 				await cdp.send("Profiler.enable");
@@ -75,9 +81,10 @@ test.describe("live renderer performance workloads", () => {
 			if (workload === "hugeTurn") {
 				await cdp.send("Performance.enable");
 				page.on("console", (message) => {
-					if (message.text() === "ao-perf:profile-start") void readMetrics().then((m) => (metricsBefore = m));
+					if (message.text() === "ao-perf:profile-start") enqueueCdp(async () => (metricsBefore = await readMetrics()));
 					if (message.text() === "ao-perf:profile-stop")
-						void readMetrics().then((after) => {
+						enqueueCdp(async () => {
+							const after = await readMetrics();
 							browserMetrics = Object.fromEntries(
 								metricNames.map((name) => [name, Math.round(((after[name] ?? 0) - (metricsBefore[name] ?? 0)) * (name.endsWith("Count") ? 1 : 1000) * 10) / 10]),
 							);
@@ -87,8 +94,8 @@ test.describe("live renderer performance workloads", () => {
 			if (cpuProfilePath) {
 				if (workload === "hugeTurn") {
 					page.on("console", (message) => {
-						if (message.text() === "ao-perf:profile-start") void startProfile();
-						if (message.text() === "ao-perf:profile-stop") void stopProfile();
+						if (message.text() === "ao-perf:profile-start") enqueueCdp(startProfile);
+						if (message.text() === "ao-perf:profile-stop") enqueueCdp(stopProfile);
 					});
 				} else {
 					await startProfile();
@@ -103,6 +110,7 @@ test.describe("live renderer performance workloads", () => {
 				},
 			);
 			await traceStopped;
+			await pendingCdp;
 			if (cpuProfilePath) {
 				if (workload !== "hugeTurn") await stopProfile();
 				await mkdir(path.dirname(cpuProfilePath), { recursive: true });
