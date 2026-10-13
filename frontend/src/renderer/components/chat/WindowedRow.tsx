@@ -95,9 +95,15 @@ function observeRow(root: HTMLElement, element: Element, listener: RowListener):
 	};
 }
 
-/** A row with the reader's focus or text selection in it must stay put, or the unmount would drop both. */
+/**
+ * A row holding something the reader set up must stay mounted, or the unmount drops it:
+ * focus, a text selection, or an open disclosure. Most disclosures (an expanded command,
+ * diff, tool call or nested run) keep their open state in the row itself, so the row is
+ * the only place it lives; `aria-expanded` is how every one of them says it is open.
+ */
 function holdsReaderState(element: HTMLElement): boolean {
 	if (element.contains(document.activeElement)) return true;
+	if (element.querySelector('[aria-expanded="true"]')) return true;
 	const selection = window.getSelection();
 	return Boolean(selection && !selection.isCollapsed && selection.anchorNode && element.contains(selection.anchorNode));
 }

@@ -1,5 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
-import { createRef, type RefObject } from "react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { createRef, useState, type RefObject } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatScrollRootContext, WindowedRow } from "./WindowedRow";
 
@@ -20,13 +20,24 @@ class FakeObserver {
 	}
 }
 
-function mountRow(props: { pinned?: boolean } = {}) {
+// A disclosure that keeps its open state in the row, as an expanded command or diff does.
+function Disclosure() {
+	const [open, setOpen] = useState(false);
+	return (
+		<div>
+			<button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>toggle</button>
+			{open ? <p>details</p> : null}
+		</div>
+	);
+}
+
+function mountRow(props: { pinned?: boolean; disclosure?: boolean } = {}) {
 	const root = createRef<HTMLElement>() as RefObject<HTMLElement | null>;
 	const view = render(
 		<div ref={root as RefObject<HTMLDivElement>}>
 			<ChatScrollRootContext.Provider value={root}>
 				<WindowedRow itemIds="a b" pinned={props.pinned ?? false}>
-					<button type="button">row content</button>
+					{props.disclosure ? <Disclosure /> : <button type="button">row content</button>}
 				</WindowedRow>
 			</ChatScrollRootContext.Provider>
 		</div>,
@@ -96,5 +107,25 @@ describe("WindowedRow", () => {
 		screen.getByText("row content").focus();
 		observer.report(box, false, 80);
 		expect(screen.getByText("row content")).toBeInTheDocument();
+	});
+
+	it("keeps an expanded row, and its details, through leaving and re-entering view", () => {
+		const { observer, box } = mountRow({ disclosure: true });
+		fireEvent.click(screen.getByText("toggle"));
+		expect(screen.getByText("details")).toBeInTheDocument();
+
+		// Far away, then back: the details never went anywhere, and neither did the height.
+		observer.report(box, false, 240);
+		expect(screen.getByText("details")).toBeInTheDocument();
+		expect(box.style.height).toBe("");
+		observer.report(box, true, 240);
+		expect(screen.getByText("details")).toBeInTheDocument();
+	});
+
+	it("collapses a row again once its disclosure is closed", () => {
+		const { observer, box } = mountRow({ disclosure: true });
+		observer.report(box, false, 40);
+		expect(screen.queryByText("toggle")).not.toBeInTheDocument();
+		expect(box).toHaveStyle({ height: "40px" });
 	});
 });

@@ -118,7 +118,7 @@ Not fixed: a keystroke while a refresh lands still takes about 55 ms at 4x. That
 
 ### In-turn row windowing
 
-A turn with more than 40 runs now swaps rows far from the viewport (beyond 150% of its height) for an empty box of their exact measured height (`WindowedRow`). Scroll height and positions do not change; focus, selection, a pinned edit and a jump to a message (the box is scrolled into view and the row mounts) keep working. Browser Find and DOM selection cover only mounted rows, as with turn virtualization.
+A turn with more than 40 runs now swaps rows far from the viewport (beyond 150% of its height) for an empty box of their exact measured height (`WindowedRow`). Scroll height and positions do not change; focus, selection, an open disclosure (a row with `aria-expanded="true"` stays mounted, since expanded commands, diffs and tool calls keep that state in the row), a pinned edit and a jump to a message (the box is scrolled into view and the row mounts) keep working. Browser Find and DOM selection cover only mounted rows, as with turn virtualization.
 
 Same fixture, 3 runs, dev-mode React:
 
