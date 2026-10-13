@@ -4957,27 +4957,13 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
-		if ws.Path == "" {
-			m.cleanupAgentWorkspace(ctx, rec, "")
-			m.cleanupSystemPromptDir(rec.ID)
-			continue
-		}
-		// Runtime teardown is keyed on the terminated session's own handle, not
-		// the workspace path, so it runs even when the workspace is shared with a
-		// live successor — otherwise a skipped session would leak its runtime
-		// (the lingering keep-alive shell) until cleanup reruns.
-		// Deliberately run before acquiring the workspace gate so that any code
-		// path Destroy invokes synchronously (for example, a test fake or a future
-		// runtime adapter that spawns a successor during teardown) can itself call
-		// Spawn or Restore without deadlocking on the gate.
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
-		}
-		reclaim, reason := m.cleanupWorkspaceUnderGate(ctx, rec, ws)
+		reclaim, reason := m.cleanupWorkspaceUnderGate(ctx, rec)
 		if reason != "" {
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
+		}
+		if reclaim == "" {
+			continue // No longer eligible, or no workspace to reclaim.
 		}
 		m.cleanupSystemPromptDir(rec.ID)
 		if reclaim == ports.WorkspaceReclaimAlreadyAbsent {
@@ -4996,9 +4982,10 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 // in-progress spawn that has not yet written WorkspacePath to the store.
 // User commands run outside the gate; cleanupOne rechecks ownership under it
 // before removal.
-// Returns an empty reason when the workspace was reclaimed; a non-empty
-// reason means it was left alone this run and the reclaim value is undefined.
-func (m *Manager) cleanupWorkspaceUnderGate(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (ports.WorkspaceReclaim, string) {
+// Returns an empty reclaim and reason when the session is no longer eligible
+// or had no workspace. A non-empty reason means it was left alone this run
+// and the reclaim value is undefined.
+func (m *Manager) cleanupWorkspaceUnderGate(ctx context.Context, rec domain.SessionRecord) (ports.WorkspaceReclaim, string) {
 	// A preceding session's cleanup commands can outlive the request deadline.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), killTeardownBudget)
 	defer cancel()
@@ -5009,23 +4996,51 @@ func (m *Manager) cleanupWorkspaceUnderGate(ctx context.Context, rec domain.Sess
 		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
 	}
 	defer m.endAgentOperation(rec.ID, agentOperationKill)
+	// Restore may have completed since the candidate scan. Re-read under the
+	// same operation guard before touching its runtime or writing cleanup facts.
+	current, ok, err := m.store.GetSession(ctx, rec.ID)
+	if err != nil {
+		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
+	}
+	if !ok || !current.IsTerminated {
+		return "", ""
+	}
+	rec = current
 	facts, tracked, err := m.store.GetSessionCleanupFacts(ctx, rec.ID)
 	if err != nil {
 		m.logger.Error("read workspace cleanup facts", "sessionID", rec.ID, "error", err)
 		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
 	}
 	tracked = tracked && facts.SessionGeneration == rec.CleanupGeneration
-	if tracked {
-		if err := m.recordWorkspaceCleanup(ctx, rec, domain.DispositionPending, ""); err != nil {
-			return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
+	if tracked && (facts.WorkspaceDisposition == domain.DispositionRemoved || facts.WorkspaceDisposition == domain.DispositionNotApplicable) {
+		return "", ""
+	}
+	// Runtime teardown still precedes the workspace gate, allowing a successor
+	// to spawn during Destroy. An error is not confirmation of runtime absence.
+	if h := runtimeHandle(rec.Metadata); h.ID != "" {
+		if err := m.runtime.Destroy(ctx, h); err != nil {
+			m.logger.Warn("cleanup: runtime teardown failed", "sessionID", rec.ID, "error", err)
+			return ports.WorkspaceReclaimRemoved, "runtime teardown failed"
 		}
 	}
-	reclaim, reason := m.cleanupOne(ctx, rec, ws)
-	if tracked {
-		if err := m.recordWorkspaceCleanupResult(ctx, rec, reason); err != nil {
-			m.logger.Error("record retried workspace cleanup", "sessionID", rec.ID, "error", err)
-			return reclaim, "workspace teardown failed"
+	ws := workspaceInfo(rec)
+	if ws.Path == "" {
+		m.cleanupAgentWorkspace(ctx, rec, "")
+		m.cleanupSystemPromptDir(rec.ID)
+		if err := m.recordWorkspaceCleanup(ctx, rec, domain.DispositionNotApplicable, ""); err != nil {
+			return "", "workspace teardown failed"
 		}
+		return "", ""
+	}
+	if err := m.recordWorkspaceCleanup(ctx, rec, domain.DispositionPending, ""); err != nil {
+		return ports.WorkspaceReclaimRemoved, "workspace teardown failed"
+	}
+	reclaim, reason := m.cleanupOne(ctx, rec, ws)
+	// Legacy sessions have no facts row yet. Record a confirmed result for them
+	// too, so an already-absent workspace is reconciled once rather than forever.
+	if err := m.recordWorkspaceCleanupResult(ctx, rec, reason); err != nil {
+		m.logger.Error("record retried workspace cleanup", "sessionID", rec.ID, "error", err)
+		return reclaim, "workspace teardown failed"
 	}
 	return reclaim, reason
 }
