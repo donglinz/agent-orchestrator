@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -265,6 +267,111 @@ func TestAbsorbReportBatchSurvivesEarlierInterrupt(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("absorbed report turn was dropped by the interrupt: %q", texts)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// blockingAbsorbStore pauses an absorb inside the store, after its controller
+// lookup and before its append commits.
+type blockingAbsorbStore struct {
+	chatsvc.Store
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingAbsorbStore) AbsorbQueuedReportBatch(
+	ctx context.Context, conversationID, batchKey, addition string, now, cancelCutoff time.Time,
+) (bool, error) {
+	close(s.entered)
+	<-s.release
+	return s.Store.AbsorbQueuedReportBatch(ctx, conversationID, batchKey, addition, now, cancelCutoff)
+}
+
+// A controller that starts while a report is being absorbed must not publish,
+// and so must not drain the queued turn, until the append has committed;
+// otherwise it would dispatch the text it read before the append and the
+// absorbed reports would never reach the agent.
+func TestAbsorbReportBatchHoldsControllerPublicationUntilAppendCommits(t *testing.T) {
+	st, _ := openProvisioningStore(t, domain.SessionProvisionReady)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	orchestrator, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		ProvisionState: domain.SessionProvisionProvisioning,
+		CreatedAt:      now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocking := &blockingAbsorbStore{Store: st, entered: make(chan struct{}), release: make(chan struct{})}
+	provider := newFakeConversation()
+	next := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: blocking, Sessions: st, Reader: fullSnapshotReader(st),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			next++
+			return fmt.Sprintf("absorb-publication-%d", next)
+		},
+	})
+	// The first batch is queued before any controller exists.
+	if _, err := svc.Send(ctx, orchestrator.ID, ports.ChatUserMessage{
+		Text: reportsvc.ReportBatchHeader + "\n\n[done] w1", ClientMessageID: "report-batch:r1",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type absorbResult struct {
+		absorbed bool
+		err      error
+	}
+	absorbed := make(chan absorbResult, 1)
+	go func() {
+		ok, err := svc.AbsorbReportBatch(ctx, orchestrator.ID,
+			reportsvc.ReportBatchHeader+"\n\n[done] w2", "report-batch:r2")
+		absorbed <- absorbResult{ok, err}
+	}()
+	<-blocking.entered
+
+	started := make(chan error, 1)
+	go func() {
+		_, err := svc.Start(ctx, chatsvc.StartConfig{
+			SessionID: orchestrator.ID, ProjectID: testProject, Harness: domain.HarnessCodex,
+			WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+		})
+		started <- err
+	}()
+	select {
+	case err := <-started:
+		t.Fatalf("controller published while a report append was in flight (start err = %v)", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(blocking.release)
+	if result := <-absorbed; result.err != nil || !result.absorbed {
+		t.Fatalf("absorb = %+v; want absorbed", result)
+	}
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), orchestrator.ID) })
+
+	if err := svc.DrainQueued(ctx, orchestrator.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := reportsvc.ReportBatchHeader + "\n\n[done] w1\n\n[done] w2"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		texts := provider.sentTexts()
+		if len(texts) == 1 && texts[0] == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provider received %q; want the absorbed report turn %q", texts, want)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

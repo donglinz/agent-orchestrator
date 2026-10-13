@@ -125,6 +125,8 @@ func (s *Service) AbsorbReportBatch(ctx context.Context, id domain.SessionID, ba
 	// held while waiting for one, keeps the controller we locked current and,
 	// when none is registered, keeps one from registering and draining. Controller
 	// start under the registry write lock does not wait for the dispatch lock.
+	// Every drain runs on a registered controller, so a controller that is still
+	// starting or reconnecting cannot read the queued text before it is published.
 	for {
 		s.mu.RLock()
 		controller := s.controllers[id]
