@@ -40,6 +40,12 @@ const CORPUS: Record<string, string> = {
 	formFeedAndVerticalTabLines: "one\n\f\ntwo\n\v\nthree",
 	spacesAndTabsBlank: "one\n \t \ntwo\n\t\nthree",
 	bareCarriageReturns: "one\r\rtwo\r\r- three",
+	definitionAfterListFence: "[foo]\n\ntext\n\n- ~~~\n  code\n  ~~~\n\n[foo]: /url",
+	definitionAfterQuoteFence: "[foo]\n\ntext\n\n> ```\n> code\n> ```\n\n[foo]: /url",
+	definitionAfterOrderedListFence: "[foo]\n\ntext\n\n1. step\n   ```sh\n   ls\n   ```\n\n[foo]: /url",
+	listFenceThenTopLevelFence: "- ~~~\n  code\n  ~~~\n\ntext\n\n~~~\nA\n\nB\n~~~\n\nend",
+	listFenceEndedByUnindentedFence: "- a\n\n  ~~~\n  code\n\n~~~\nA\n\nB\n~~~\n\nend",
+	indentedFence: "text\n\n  ```\n  x\n\n  y\n  ```\n\nend",
 	footnote: "a[^1]\n\ntext\n\n[^1]: note",
 	html: "<details>\n<summary>s</summary>\n\nbody\n\n</details>\n\nafter",
 	inlineHtml: "a <b>b</b>\n\nc",
@@ -100,6 +106,10 @@ describe("splitMarkdownBlocks", () => {
 		expect(splitMarkdownBlocks("[a]\n\n- [a]: /url")).toHaveLength(1);
 		expect(splitMarkdownBlocks("[a]\n\n[a\nb]: /url")).toHaveLength(1);
 		expect(splitMarkdownBlocks("[a]\n\n[a\\]]: /url")).toHaveLength(1);
+		// Fences whose end depends on their container.
+		expect(splitMarkdownBlocks("[a]\n\nb\n\n- ~~~\n  c\n  ~~~\n\n[a]: /url")).toHaveLength(1);
+		expect(splitMarkdownBlocks("a\n\n> ```\n> b\n> ```\n\nc")).toHaveLength(1);
+		expect(splitMarkdownBlocks("a\n\n  ```\n  b\n  ```\n\nc")).toHaveLength(1);
 		// Inside a fence it is code, not a definition.
 		expect(splitMarkdownBlocks("[a]\n\n```\n[a]: /url\n```\n\nb")).toHaveLength(3);
 		expect(splitMarkdownBlocks("a\n\n<div>b</div>")).toHaveLength(1);
@@ -149,6 +159,12 @@ const FRAGMENTS = [
 	"```sh\nls\n\npwd\n```",
 	"```sh\nunclosed\n\nfence",
 	"~~~\n[ref]: /in-fence\n~~~",
+	"- ~~~\n  code\n  ~~~",
+	"- ~~~\n  code\n\n  more\n  ~~~",
+	"> ```\n> code\n> ```",
+	"1. step\n   ```sh\n   ls\n\n   pwd\n   ```",
+	"  ```\n  indented fence\n  ```",
+	"- a\n\n  ~~~\n  code",
 	"````\n```\n````",
 	"    indented code",
 	"| a | b |\n|---|---|\n| 1 | 2 |",

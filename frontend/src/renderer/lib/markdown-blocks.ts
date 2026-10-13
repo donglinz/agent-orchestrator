@@ -15,6 +15,8 @@
  *
  *   - link reference and footnote definitions, which apply to the whole document
  *     wherever they appear, including inside quotes and list items;
+ *   - a fence inside a quote or list item, or indented, whose end depends on its
+ *     container;
  *   - HTML, whose blocks can run across blank lines;
  *   - a line that starts like a list item, which can continue a list across the
  *     blank line and change whether it is loose.
@@ -22,7 +24,12 @@
  * The pieces always concatenate back to the input.
  */
 
-const OPENING_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// Only a fence at column 0 is tracked. A fence inside a quote or list item, or indented
+// (which may mean it sits in a list item), ends where its container ends, not at the
+// next fence marker, and misreading that would cut inside a code block or hide a
+// definition behind a "fence". Such text is not split.
+const OPENING_FENCE = /^(`{3,}|~{3,})(.*)$/;
+const CONTAINED_FENCE = /^(?:[ \t]*>|[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+|[ \t]+)+(?:`{3,}|~{3,})/;
 // Every definition ends its label with "]:". Matching only that, on any line outside a
 // fence, also catches definitions that start inside a quote or list item, labels that
 // span lines and labels with an escaped bracket. Prose that happens to contain it just
@@ -54,7 +61,7 @@ export function splitMarkdownBlocks(text: string): string[] {
 			previousBlank = false;
 			continue;
 		}
-		if (content.includes(DEFINITION_MARK) || HTML_START.test(content)) return [text];
+		if (content.includes(DEFINITION_MARK) || HTML_START.test(content) || CONTAINED_FENCE.test(content)) return [text];
 
 		const blank = BLANK_LINE.test(content);
 		if (!blank) {
