@@ -44,20 +44,21 @@ type sessionRenameRequest struct {
 }
 
 type sessionDTO struct {
-	ID           string          `json:"id"`
-	ProjectID    string          `json:"projectId"`
-	IssueID      string          `json:"issueId,omitempty"`
-	Kind         string          `json:"kind"`
-	Harness      string          `json:"harness,omitempty"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Activity     sessionActivity `json:"activity"`
-	IsTerminated bool            `json:"isTerminated"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
-	Status       string          `json:"status"`
-	Branch       string          `json:"branch,omitempty"`
-	BranchState  *branchStateDTO `json:"branchState,omitempty"`
-	PRs          []sessionPRDTO  `json:"prs"`
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"projectId"`
+	IssueID          string          `json:"issueId,omitempty"`
+	Kind             string          `json:"kind"`
+	Harness          string          `json:"harness,omitempty"`
+	DisplayName      string          `json:"displayName,omitempty"`
+	Activity         sessionActivity `json:"activity"`
+	IsTerminated     bool            `json:"isTerminated"`
+	WorkspaceCleanup string          `json:"workspaceCleanup,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
+	Status           string          `json:"status"`
+	Branch           string          `json:"branch,omitempty"`
+	BranchState      *branchStateDTO `json:"branchState,omitempty"`
+	PRs              []sessionPRDTO  `json:"prs"`
 }
 
 type branchStateDTO struct {
@@ -816,7 +817,16 @@ func (c *commandContext) previewCleanupSessions(ctx context.Context, project str
 	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
 		return nil, err
 	}
-	return filterAndSortSessions(res.Sessions, true), nil
+	candidates := make([]sessionDTO, 0, len(res.Sessions))
+	for _, sess := range res.Sessions {
+		// The daemon exposes only current-generation cleanup facts. Missing
+		// facts (including older daemons) and unsuccessful outcomes stay eligible.
+		if !sess.IsTerminated || sess.WorkspaceCleanup == "removed" || sess.WorkspaceCleanup == "not_applicable" {
+			continue
+		}
+		candidates = append(candidates, sess)
+	}
+	return filterAndSortSessions(candidates, true), nil
 }
 
 func (c *commandContext) fetchScopedSession(ctx context.Context, id, project string) (sessionDTO, error) {
