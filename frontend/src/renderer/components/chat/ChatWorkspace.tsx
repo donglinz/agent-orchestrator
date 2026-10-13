@@ -122,6 +122,8 @@ import {
 	LiveResponseStatus,
 	type TurnOutcomeRetryControl,
 } from "./ChatTimelineItems";
+import { ChatFind } from "./ChatFind";
+import { ChatFindRevealContext, createChatFindRevealStore, useChatFindReveal } from "./chatFindReveal";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatImageSourceProvider } from "./chat-image-source";
@@ -1668,6 +1670,7 @@ function ChatWorkspaceContent({
 					aria-hidden={reviewerActive || shellActive}
 					aria-label="Chat conversation"
 					className="flex min-h-0 flex-1 flex-col"
+					data-chat-find-scope=""
 					data-testid="chat-conversation-panel"
 					hidden={reviewerActive || shellActive}
 					inert={
@@ -2469,6 +2472,8 @@ export function Timeline({
 	const uiSessionId = draftScope.sessionId;
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
+	const timelineRoot = useRef<HTMLDivElement>(null);
+	const [findRevealStore] = useState(createChatFindRevealStore);
 	const virtualContent = useRef<HTMLDivElement>(null);
 	const [virtualScrollMargin, setVirtualScrollMargin] = useState(20);
 	const measuredVirtualGroups = useRef(new WeakSet<TimelineGroup>());
@@ -3339,6 +3344,24 @@ export function Timeline({
 	const renderedGroups = virtualized
 		? virtualRows.map((row) => ({ group: groups[row.index]!, row, index: row.index }))
 		: groups.map((group, index) => ({ group, row: undefined, index }));
+	// In-chat find (ChatFind) reaches the timeline through these two seams. Both are
+	// stable so the find component's listeners are not re-bound on every snapshot.
+	const scrollToFindGroup = useStableCallback((groupKey: string) => {
+		// Reading a match, not following the live edge.
+		releaseFollow();
+		if (!virtualized) return;
+		const index = groups.findIndex((group) => group.key === groupKey);
+		if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
+	});
+	const findViewportGroupIndex = useStableCallback((): number => {
+		const node = scroller.current;
+		if (!node) return 0;
+		const top = node.getBoundingClientRect().top;
+		for (const row of Array.from(virtualContent.current?.children ?? [])) {
+			if (row.getBoundingClientRect().bottom >= top) return Number((row as HTMLElement).dataset.index ?? 0);
+		}
+		return Math.max(0, groups.length - 1);
+	});
 	useEffect(() => {
 		if (!annotationTarget) return;
 		const index = groups.findIndex((group) => group.items.some((item) => item.id === annotationTarget.messageId));
@@ -3774,7 +3797,9 @@ export function Timeline({
 	}
 
 	return (
+		<ChatFindRevealContext.Provider value={findRevealStore}>
 		<div
+			ref={timelineRoot}
 			className="relative min-h-0 flex-1"
 			data-testid="chat-timeline"
 			// The timeline is a fixed-size flex item with its own scroll viewport.
@@ -4062,7 +4087,18 @@ export function Timeline({
 					<ArrowDown aria-hidden="true" className="size-5" />
 				</Button>
 			) : null}
+			<ChatFind
+				rootRef={timelineRoot}
+				scrollerRef={scroller}
+				contentRef={scrollContent}
+				groups={groups}
+				hasOlder={hasOlder}
+				revealStore={findRevealStore}
+				scrollToGroup={scrollToFindGroup}
+				viewportGroupIndex={findViewportGroupIndex}
+			/>
 		</div>
+		</ChatFindRevealContext.Provider>
 	);
 }
 
@@ -4279,6 +4315,11 @@ const TurnGroup = memo(function TurnGroup({
 		);
 	}
 	const outcome = showSettledStatus ? group.outcome : undefined;
+	// In-chat find opens the "Worked for" fold when a match is folded inside it.
+	useChatFindReveal(
+		(itemId) => Boolean(outcome) && foldedRuns.some((run) => run.items.some((item) => item.id === itemId)),
+		() => onActivityDisclosureChange(`${group.key}:worked`, true),
+	);
 	if (!outcome) {
 		body.push(...workedRuns.map(renderRun));
 	} else {
@@ -4388,7 +4429,20 @@ function TurnLiveStatus({
 	return null;
 }
 
-const TimelineItem = memo(function TimelineItem({
+/**
+ * One run's item. Wrapped so in-chat find can locate the mounted element for an
+ * item id; the wrapper is a plain block, and nothing is drawn for an item that
+ * renders nothing, so it adds no gap. Memoized, so a refresh that leaves an item's
+ * props alone does not re-render it.
+ */
+const TimelineItem = memo(function TimelineItem(props: TimelineItemProps) {
+	const content = timelineItemContent(props);
+	return content ? <div data-chat-find-id={props.item.id}>{content}</div> : null;
+});
+
+type TimelineItemProps = Parameters<typeof timelineItemContent>[0];
+
+function timelineItemContent({
 	item,
 	sessionId,
 	apiBaseUrl,
@@ -4532,7 +4586,7 @@ const TimelineItem = memo(function TimelineItem({
 		return plan ? <TurnPlan plan={plan} /> : <ActivityRow activity={item} />;
 	}
 	return <ActivityRow activity={item} />;
-});
+}
 
 /* -------------------------------------------------------------------------- */
 /* identity                                                                    */

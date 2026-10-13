@@ -5168,3 +5168,103 @@ describe("durable queued edits", () => {
 		expect(readChatSessionDraft(snapshot.sessionId).queuedEdit).toEqual(pending);
 	});
 });
+
+describe("in-chat find", () => {
+	function openFind() {
+		const composer = screen.getByLabelText("Message the agent");
+		fireEvent.keyDown(composer, { key: "f", metaKey: true });
+		return screen.getByRole("textbox", { name: "Find in chat" });
+	}
+
+	const mountedItem = (id: string) => document.querySelector(`[data-chat-find-id="${id}"]`);
+
+	it("finds a tool call folded inside a settled turn and opens the folds around it", async () => {
+		const snapshot = chatFixtureLongHistory(8);
+		const target = snapshot.items.find((item) => item.id === "ha-3-1");
+		if (target?.kind !== "activity") throw new Error("fixture changed");
+		expect(target.activityKind).toBe("command");
+		target.detail = { ...target.detail, command: "zebra-unique-command --flag" };
+		render(<ChatWorkspace snapshot={snapshot} />);
+		expect(mountedItem("ha-3-1")).toBeNull();
+
+		const input = openFind();
+		await userEvent.type(input, "ZEBRA-unique");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 1"));
+		await waitFor(() => expect(mountedItem("ha-3-1")).not.toBeNull());
+		await waitFor(() => expect(mountedItem("ha-3-1")).toHaveTextContent("zebra-unique-command"));
+	});
+
+	it("searches visible text only, never the hidden worker report envelope", async () => {
+		const snapshot = chatFixtureLongHistory(3);
+		const prompt = snapshot.items.find((item): item is ConversationMessage => item.kind === "message" && item.role === "user");
+		if (!prompt) throw new Error("fixture changed");
+		prompt.text = "Visible prompt words\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] hiddenreportword\n</ao-worker-reports>";
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		await userEvent.type(openFind(), "hiddenreportword");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("No results"));
+		await userEvent.clear(screen.getByRole("textbox", { name: "Find in chat" }));
+		await userEvent.type(screen.getByRole("textbox", { name: "Find in chat" }), "visible prompt words");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 1"));
+	});
+
+	it("brings an off-screen turn into the virtualized window", async () => {
+		stubVirtualTimelineGeometry();
+		const snapshot = chatFixtureLongHistory(100);
+		const prompts = snapshot.items.filter((item): item is ConversationMessage => item.kind === "message" && item.role === "user");
+		prompts[40]!.text = "Needle far from the viewport";
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		expect(screen.queryByText("Needle far from the viewport")).not.toBeInTheDocument();
+
+		await userEvent.type(openFind(), "needle far from");
+		await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 1"));
+		await waitFor(() => {
+			fireEvent.scroll(log);
+			expect(screen.getByText("Needle far from the viewport")).toBeInTheDocument();
+		});
+		await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+	});
+
+	it("paints highlights for every match and a stronger one for the current match", async () => {
+		const registry = new Map<string, { ranges: Range[] }>();
+		class FakeHighlight {
+			ranges: Range[];
+			constructor(...ranges: Range[]) { this.ranges = ranges; }
+		}
+		const previousCss = (globalThis as { CSS?: object }).CSS;
+		Object.assign(globalThis, { Highlight: FakeHighlight, CSS: { ...previousCss, highlights: registry } });
+		try {
+			const snapshot = chatFixtureLongHistory(4);
+			render(<ChatWorkspace snapshot={snapshot} />);
+			await userEvent.type(openFind(), "round");
+			await waitFor(() => expect(screen.getByTestId("chat-find-count")).toHaveTextContent("1 of 4"));
+			await waitFor(() => expect(registry.get("chat-find")?.ranges).toHaveLength(4));
+			await waitFor(() => expect(registry.get("chat-find-active")?.ranges).toHaveLength(1));
+			expect(registry.get("chat-find-active")?.ranges[0]?.toString().toLowerCase()).toBe("round");
+
+			fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in chat" }), { key: "Enter" });
+			expect(screen.getByTestId("chat-find-count")).toHaveTextContent("2 of 4");
+			await waitFor(() => {
+				const active = registry.get("chat-find-active")?.ranges[0];
+				expect(active?.startContainer.parentElement?.closest("[data-chat-find-id]")).toHaveAttribute("data-chat-find-id", "hm-1");
+			});
+
+			fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in chat" }), { key: "Escape" });
+			expect(registry.size).toBe(0);
+		} finally {
+			Reflect.deleteProperty(globalThis, "Highlight");
+			Object.assign(globalThis, { CSS: previousCss });
+		}
+	});
+
+	it("leaves Cmd+F to the terminal tabs it does not own", async () => {
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(3)} />);
+		const outside = document.createElement("input");
+		document.body.append(outside);
+		outside.focus();
+		expect(fireEvent.keyDown(outside, { key: "f", metaKey: true })).toBe(true);
+		expect(screen.queryByTestId("chat-find-bar")).not.toBeInTheDocument();
+		outside.remove();
+	});
+});
