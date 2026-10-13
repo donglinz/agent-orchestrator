@@ -65,6 +65,11 @@ export interface ChatDraftQueuedEdit {
 	revision: string;
 	turnId: string;
 	text: string;
+	/**
+	 * Worker-report envelope hidden from the editor. Held here, not re-read from the
+	 * queue, so a retry after the turn left the queue sends the identical payload.
+	 */
+	reports?: string;
 	/** Daemon message revision, held fixed across retries of this edit. */
 	expectedRevision?: number;
 	attachments?: ChatDraftRetainedAttachment[];
@@ -813,6 +818,7 @@ function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is Cha
 			typeof draft.queuedEdit.revision === "string" && draft.queuedEdit.revision.length > 0 &&
 			typeof draft.queuedEdit.turnId === "string" && draft.queuedEdit.turnId.length > 0 &&
 			typeof draft.queuedEdit.text === "string" &&
+			(draft.queuedEdit.reports === undefined || typeof draft.queuedEdit.reports === "string") &&
 			(draft.queuedEdit.nativeImages === undefined || typeof draft.queuedEdit.nativeImages === "boolean") &&
 			(draft.queuedEdit.clientMessageId === undefined || typeof draft.queuedEdit.clientMessageId === "string") &&
 			(draft.queuedEdit.ownerId === undefined || typeof draft.queuedEdit.ownerId === "string") &&

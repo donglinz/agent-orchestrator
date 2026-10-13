@@ -302,6 +302,23 @@ describe("steer message", () => {
 		expect(screen.getByText(/Steered into the running turn/i)).toBeInTheDocument();
 	});
 
+	it("hides the appended worker report envelope from a steer bubble", () => {
+		const text = "Keep going\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>";
+		render(
+			<SteerMessage
+				sessionId="ao-1"
+				activity={activity({
+					activityKind: "system",
+					summary: text,
+					detail: { event: "steer", text, origin: "human" },
+				})}
+			/>,
+		);
+		expect(screen.getByText("Keep going")).toBeInTheDocument();
+		expect(screen.queryByText(/Reports since your previous turn/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/ao-worker-reports/)).not.toBeInTheDocument();
+	});
+
 	it("renders a CLI steer as an attributed automation block with a session link", () => {
 		render(
 			<SteerMessage

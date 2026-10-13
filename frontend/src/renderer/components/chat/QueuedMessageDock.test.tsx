@@ -158,4 +158,20 @@ describe("QueuedMessageDock reorder", () => {
 			expect(onReorderQueuedTurns).toHaveBeenCalledWith(["queued-2", "queued-1"]);
 		});
 	});
+
+	it("hides the worker report envelope from the row and from the edit text", async () => {
+		const user = userEvent.setup();
+		const onBeginQueuedEdit = vi.fn();
+		render(
+			<QueuedMessageDock
+				messages={queuedMessages(["Please continue\n\n<ao-worker-reports>\nReports since your previous turn:\n\n[done] [worker](ao://sessions/project/worker)\nFinished\n</ao-worker-reports>"])}
+				onBeginQueuedEdit={onBeginQueuedEdit}
+			/>,
+		);
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("Please continue")).toBeInTheDocument();
+		expect(within(dock).queryByText(/Reports since your previous turn/)).not.toBeInTheDocument();
+		await user.click(within(dock).getByLabelText("Edit queued message"));
+		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "Please continue");
+	});
 });

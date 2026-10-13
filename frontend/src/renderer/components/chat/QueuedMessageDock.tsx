@@ -17,7 +17,7 @@ import { ChevronDown, Circle, CornerDownLeft, GripVertical, Pencil, Trash2 } fro
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
 import { useTranslation } from "react-i18next";
-import { labelInlineImages } from "./messageAttachments";
+import { humanVisibleText, labelInlineImages } from "./messageAttachments";
 
 export type QueuedMessage = {
 	turnId: string;
@@ -106,7 +106,7 @@ function QueuedMessageRowContent({
 	dragHandleProps?: Record<string, unknown>;
 }) {
 	const { t } = useTranslation();
-	const text = labelInlineImages(message.text, (index) => t("chat.image.numbered", { index }));
+	const text = labelInlineImages(humanVisibleText(message.text), (index) => t("chat.image.numbered", { index }));
 	const showHoverSteerButton =
 		showHoverSteer ||
 		Boolean(onPromoteQueuedTurn && canSteer && !showPersistentSteer && !suppressHoverSteer);
@@ -167,7 +167,7 @@ function QueuedMessageRowContent({
 					<button
 						type="button"
 						disabled={busy}
-						onClick={() => onBeginQueuedEdit(turnId, message.text)}
+						onClick={() => onBeginQueuedEdit(turnId, humanVisibleText(message.text))}
 						className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100"
 						aria-label="Edit queued message"
 						title="Edit"

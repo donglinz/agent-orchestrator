@@ -127,7 +127,7 @@ import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatImageSourceProvider } from "./chat-image-source";
 import { ChatComposer, type ChatComposerHandle, type StoredComposerAttachment } from "./ChatComposer";
 import { ContextMeter } from "./ContextMeter";
-import { stagedAttachmentParts, attachmentName } from "./messageAttachments";
+import { stagedAttachmentParts, attachmentName, splitWorkerReports } from "./messageAttachments";
 import type { QueuedMessageEditOptions } from "../../types/conversation";
 import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { SessionStartup } from "./SessionStartup";
@@ -530,6 +530,19 @@ function OfflineRemoteTerminal() {
  * then only fail closed against the successor lease. If storage alone fails,
  * Chat still mounts, but with an in-memory composer that owns no saved drafts.
  */
+/**
+ * Unsent drafts saved before `reports` existed hold the whole queued message,
+ * envelope included. Show only the human text and keep the envelope aside.
+ * A save already pending under a recovery key is left untouched: the old composer
+ * built its request from that whole text (envelope before any attachment
+ * references), and a retry must reproduce that payload byte for byte.
+ */
+function withSplitWorkerReports(edit: ChatDraftQueuedEdit | undefined): ChatDraftQueuedEdit | undefined {
+	if (!edit || edit.reports !== undefined || edit.clientMessageId) return edit;
+	const { visible, reports } = splitWorkerReports(edit.text);
+	return reports ? { ...edit, text: visible, reports } : edit;
+}
+
 export function ChatWorkspace(props: ChatWorkspaceProps) {
 	const { snapshot, session, draftOwner, uiSessionId = draftOwner?.sessionId ?? snapshot.sessionId } = props;
 	const draftScope = useMemo<ChatDraftScope>(
@@ -935,7 +948,7 @@ function ChatWorkspaceContent({
 	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
 	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
 	const [queueEdit, setQueueEdit] = useState<ChatDraftQueuedEdit | undefined>(
-		() => (draftPersistenceAvailable ? readChatSessionDraft(draftScope).queuedEdit : undefined),
+		() => (draftPersistenceAvailable ? withSplitWorkerReports(readChatSessionDraft(draftScope).queuedEdit) : undefined),
 	);
 	const queueEditRef = useRef(queueEdit);
 	const [queueDraftError, setQueueDraftError] = useState<string>();
@@ -1023,8 +1036,17 @@ function ChatWorkspaceContent({
 					nativeImages: currentEdit.nativeImages ?? Boolean(nativeImages),
 				}, currentEdit.revision);
 				if (!prepared.ok || !prepared.draft.queuedEdit) throw new Error("chat.draft.queuePrepareFailed");
+				// The editor only shows the human-visible text; the worker-report
+				// envelope captured when editing began is still owed to the agent. It
+				// comes from the draft, not the live queue, so a retry stays identical.
+				const reports = prepared.draft.queuedEdit.reports ?? "";
+				// An otherwise empty edit must still be rejected rather than kept alive by the envelope.
+				// A save already sent under its recovery key must replay byte for byte.
+				const hasContent = text.trim() !== "" || Boolean(attachments?.length) || Boolean(retainedContent?.length)
+					|| Boolean(currentEdit.clientMessageId);
+				const deliveredText = hasContent ? text + reports : text;
 				try {
-					await onEditQueuedTurn(queueEdit.turnId, text, {
+					await onEditQueuedTurn(queueEdit.turnId, deliveredText, {
 						clientMessageId: prepared.draft.queuedEdit.clientMessageId,
 						...(attachments?.length ? { attachments } : {}),
 						retainedContent: queueEdit.attachments === undefined ? undefined : retainedContent,
@@ -1071,7 +1093,7 @@ function ChatWorkspaceContent({
 				attachments.push({ id: `content-${index}`, contentIndex: index, contentType: item.type,
 					name: item.name || (item.type === "image" ? `Image ${index + 1}` : item.uri || "Attachment") });
 			});
-			updateQueueDraft({ turnId, ownerId: crypto.randomUUID(), text: parts.body, expectedRevision: message.revision, attachments, stagedAttachments: [] });
+			updateQueueDraft({ turnId, ownerId: crypto.randomUUID(), text: parts.body, reports: splitWorkerReports(message.text).reports || undefined, expectedRevision: message.revision, attachments, stagedAttachments: [] });
 		},
 		[newWorkDisabled, queuedMessages, updateQueueDraft],
 	);
